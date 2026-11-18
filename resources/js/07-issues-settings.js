@@ -1,0 +1,145 @@
+// ---------- issues ----------
+const SEL = new Set(); let ISSUE_ROWS = []; let ASSIGNEES = null;
+const PRI = { null: 0, low: 1, medium: 2, high: 3 };
+const priBars = p => `<span class="pri p${PRI[p] || 0}" title="${p ? p[0].toUpperCase() + p.slice(1) : 'No priority'}"><i></i><i></i><i></i></span>`;
+async function assignees() { if (!ASSIGNEES) { try { ASSIGNEES = (await api('/issues/assignees')).assignees; } catch (e) { ASSIGNEES = []; } } return ASSIGNEES; }
+function issueTitle(x) {
+  if (x.type === 'performance') return [x.title || 'Slow ' + (x.subtype || 'execution'), `${x.subtype ? x.subtype.replace('_', ' ') + ' · ' : ''}exceeded ${fmtD(x.threshold_ms)} (${fmtD(x.triggered_duration_ms)})`];
+  return [x.title || 'Exception', x.message || ''];
+}
+const ISSUE_COLS = rows => [
+  { k: 'sel', h: `<span class="cb ${rows.length && rows.every(r => SEL.has(r.id)) ? 'on' : ''}" data-check="all" role="checkbox" aria-checked="${rows.length && rows.every(r => SEL.has(r.id))}" aria-label="Select all">${rows.length && rows.every(r => SEL.has(r.id)) ? ic('check', 11, 3) : ''}</span>`, w: '28px', nosort: 1, r: x => `<span class="cb ${SEL.has(x.id) ? 'on' : ''}" data-check="${x.id}" role="checkbox" aria-checked="${SEL.has(x.id)}" aria-label="Select ${iid(x.id)}">${SEL.has(x.id) ? ic('check', 11, 3) : ''}</span>` },
+  { k: 'id', label: 'ID', w: '74px', r: x => `<span class="mono">${x.id}</span>` },
+  { k: 'priority', h: ic('bars', 14), w: '46px', v: x => PRI[x.priority] || 0, r: x => priBars(x.priority) },
+  { k: 'title', label: 'Issue', w: 'minmax(300px,1fr)', r: x => { const [a, b] = issueTitle(x); return `<div class="cell2"><b>${esc(a)}</b><small>${esc(b)}</small></div>`; } },
+  { k: 'spark', label: 'Trend', w: '96px', nosort: 1, r: x => spark(x.buckets) },
+  cNum('occurrences', 'Count', '74px', fmtN, 'occurrences_count'), cNum('users_affected', 'Users', '64px', fmtN, 'users_count'),
+  agoCell('first_seen_at', 'First seen', '100px', 'first_seen_at'), agoCell('last_seen_at', 'Last seen', '96px', 'last_seen_at'),
+  { k: 'assigned_to', label: 'Assigned', w: '82px', v: x => x.assigned_to ? x.assigned_to.name : '', r: x => `<span style="display:flex;justify-content:center">${avatar(x.assigned_to && x.assigned_to.id ? x.assigned_to : null, 'sm')}</span>` },
+];
+function spark(b) {
+  if (!b || !b.length) return '<span class="dim">—</span>'; const mx = Math.max(...b.map(x => x.count), 1);
+  return `<span class="spark" aria-hidden="true">${b.map(x => `<i style="height:${x.count ? Math.max(12, x.count / mx * 100) : 4}%" class="${x.count ? 'on' : ''}"></i>`).join('')}</span>`;
+}
+async function vIssues() {
+  const tab = VS.itab || 'exception', st = VS.ist || 'open', page = VS.ipage || 1; const cols = ISSUE_COLS([]);
+  const [d] = await Promise.all([api('/issues', { ...wp(), type: tab, status: st, q: VS.iq || '', page, limit: 50, ...sortParams('issues', cols) }), assignees()]);
+  ISSUE_ROWS = d.issues; OPEN_ISSUES = null; const rows = d.issues; const c = d.counts;
+  const pages = Math.max(1, Math.ceil(d.total / d.limit));
+  return `<div class="ph" style="flex-wrap:wrap"><div class="seg sans">${[['exception', 'Exceptions'], ['performance', 'Performance']].map(x => `<button class="${tab === x[0] ? 'on' : ''}" data-act="itab" data-arg="${x[0]}">${x[1]}<span class="cnt">${fmtN(c.types[x[0]])}</span></button>`).join('')}</div><div class="grow"></div>
+  <label class="search">${ic('search', 15)}<input data-isearch="1" placeholder="Search issues" value="${esc(VS.iq || '')}" aria-label="Search issues"></label>
+  <div class="seg sans">${[['open', 'Open'], ['unassigned', 'Unassigned'], ['mine', 'Mine'], ['resolved', 'Resolved'], ['ignored', 'Ignored']].map(s => `<button class="${st === s[0] ? 'on' : ''}" data-act="ist" data-arg="${s[0]}">${s[1]}${['open', 'unassigned', 'mine'].includes(s[0]) ? `<span class="cnt">${fmtN(c.statuses[s[0]])}</span>` : ''}</button>`).join('')}</div>${periodSeg()}</div>`
+    + `<p class="mut hint">Issues seen ${periodTxt()}${S.env ? ' in ' + esc(S.env) : ''}: ${fmtInt(d.total)}.</p>`
+    + table('issues', ISSUE_COLS(rows), rows, { sort: { k: 'last_seen_at', d: -1 }, go: x => 'issues/' + x.id, rowCls: x => SEL.has(x.id) ? 'sel' : '', emptyText: st === 'open' ? 'No open issues in this period.' : 'No issues here.', minw: 1000 })
+    + (pages > 1 ? `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="btn sm" data-act="ipage" data-arg="${page - 1}" ${page > 1 ? '' : 'disabled'}>${ic('cl', 14)}Previous</button><span class="mut mono" style="align-self:center;font-size:13px">${page} / ${pages}</span><button class="btn sm" data-act="ipage" data-arg="${page + 1}" ${page < pages ? '' : 'disabled'}>Next${ic('cr', 14)}</button></div>` : '')
+    + (SEL.size ? `<div class="bulk" role="region" aria-label="Bulk actions"><button class="x" data-act="clearSel" aria-label="Clear selection">${ic('x', 14)}</button><div class="t"><b>${SEL.size}</b> of ${rows.length} selected</div><button class="bb" data-act="bulk" data-arg="status">${ic('cc', 15)}<span class="bl">Status</span></button><button class="bb" data-act="bulk" data-arg="assign">${ic('userc', 15)}<span class="bl">Assign</span></button><button class="bb" data-act="bulk" data-arg="priority">${ic('bars', 15)}<span class="bl">Priority</span></button></div>` : '');
+}
+const ACTION_TXT = { status_changed: 'set status to', priority_changed: 'set priority to', assigned: 'assigned', description_changed: 'edited the description', commented: 'commented' };
+function feedHtml(d) {
+  const names = Object.fromEntries((ASSIGNEES || []).map(a => [String(a.id), a.name]));
+  const who = x => x.actor_type === 'agent' ? 'NightOwl' : esc(x.user_name || (x.actor_type === 'system' ? 'System' : 'Someone'));
+  const items = [
+    ...d.activity.filter(a => a.action !== 'commented').map(a => ({ t: tms(a.created_at), html: `<div class="fe"><span class="who">${who(a)}</span>${a.via === 'mcp' ? '<span class="mcpb">MCP</span>' : ''} ${a.action === 'assigned' ? (a.new_value ? `assigned <span class="who">${esc(names[a.new_value] || 'user #' + a.new_value)}</span>` : 'removed the assignee') : a.action === 'description_changed' ? 'edited the description' : `${esc(ACTION_TXT[a.action] || a.action.replace(/_/g, ' '))}${a.new_value ? ` <b>${esc(a.new_value)}</b>` : ''}`}<time>${ago(a.created_at)}</time></div>` })),
+    ...d.comments.map(c => ({ t: tms(c.created_at), html: `<div class="fe cm"><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">${c.actor_type === 'mcp' || c.actor_type === 'agent' ? '<span class="av sm" style="background:#c96442">C</span>' : avatar({ id: c.user_id, name: c.user_name }, 'sm')}<span class="who">${esc(c.user_name || 'Agent')}</span>${c.actor_type === 'mcp' ? '<span class="mcpb">MCP</span>' : ''}<time>${ago(c.created_at)}</time></div><div style="color:var(--fg2);line-height:1.55;word-break:break-word">${md(c.body)}</div></div>` })),
+  ].sort((a, b) => a.t - b.t);
+  return `<div class="fe">Issue opened<time>${ago(d.issue.first_seen_at)}</time></div>` + items.map(x => x.html).join('');
+}
+async function vIssue(id) {
+  const [d] = await Promise.all([api('/issues/' + id, wp()), assignees()]); WIN = d.window; const iss = d.issue; const isPerf = iss.type === 'performance';
+  const mode = VS.ed || 'write'; if (VS.desc == null) VS.desc = iss.description || ''; const dirty = VS.desc !== (iss.description || '');
+  const [title, sub] = issueTitle(iss); const lo = d.latest_occurrence;
+  const perfLink = isPerf && iss.group_hash ? ({ route: 'requests/routes/', job: 'jobs/', command: 'commands/', scheduled_task: 'scheduled-tasks/', query: 'queries/', outgoing_request: 'outgoing/', mail: 'mail/', notification: 'notifications/' }[iss.subtype] || null) : null;
+  const status = iss.status[0].toUpperCase() + iss.status.slice(1);
+  const perfBlock = `<div class="panel"><div class="kv2"><div>${kv('Kind', esc(iss.subtype || '—'))}${kv('Threshold', fmtD(iss.threshold_ms))}${kv('Triggered at', `<span class="over">${fmtD(iss.triggered_duration_ms)}</span>`)}</div><div>${kv('Occurrences', fmtInt(iss.occurrences))}${kv('Environment', esc(iss.environment || '—'))}${perfLink && /^[0-9a-f]{32}$/.test(iss.group_hash) ? kv('Target', `<a data-go="${perfLink}${iss.group_hash}">Open ${esc(iss.subtype)}</a>`) : ''}</div></div></div><p class="mut hint">Performance issues have no per-occurrence rows: the agent opens them when the threshold is crossed and counts each breach.</p>`;
+  return `<div class="iss"><div style="min-width:0">
+    <div class="crumbs"><a data-go="issues">${esc(status)}</a><span>/</span><span>${iid(iss.id)}</span><span class="badge-s redo" style="margin-left:4px">${isPerf ? 'Performance' : 'Exception'}</span>${iss.environment ? `<span class="badge-s">${esc(iss.environment)}</span>` : ''}</div>
+    <h1 class="ititle">${esc(isPerf ? title : shortCls(title) + (sub ? ': ' + (sub.length > 140 ? sub.slice(0, 140).replace(/\s\S*$/, '') + '…' : sub) : ''))}</h1>
+    <div class="editor"><div class="editor-h"><button class="tb ${mode === 'write' ? 'on' : ''}" data-act="ed" data-arg="write">Write</button><button class="tb ${mode === 'preview' ? 'on' : ''}" data-act="ed" data-arg="preview">Preview</button><span class="gen">${dirty ? `<button class="btn sm primary" data-act="saveDesc" data-arg="${iss.id}">Save description</button>` : '<span class="dim">Markdown</span>'}</span></div>
+    ${mode === 'write' ? `<textarea id="desc" data-desc="1" placeholder="Describe the cause and the fix. Agents with an MCP token can read and write this too." aria-label="Description">${esc(VS.desc)}</textarea>` : `<div class="pv">${VS.desc ? md(VS.desc) : '<span class="dim">Nothing to preview yet.</span>'}</div>`}</div>
+    ${isPerf ? perfBlock : (lo ? excBlock(lo, { key: 'iss' + iss.id }) : '<div class="empty" style="margin-bottom:24px">The stack trace is gone with the raw events (kept about 14 days).</div>')}
+    ${isPerf ? '' : (d.buckets ? `<div class="charts" style="margin-bottom:24px">${barCard({ label: 'Occurrences', value: fmtN(sum(d.buckets, b => b.count)), ts: tsOf(d.buckets), stacks: [{ l: 'Occurrences', c: lo && lo.handled ? COL.grey : COL.red, data: d.buckets.map(b => b.count) }], legend: false, h: 120 })}</div>` : '')
+      + listHeader({ icon: 'alert', title: 'Latest occurrences', tableId: 'iocc', viewToggle: false }) + table('iocc', occCols(), d.recent_occurrences || [], { sort: { k: 'created_at', d: -1 }, go: x => execLink(x.source, x.execution_id), text: x => [x.execution_preview, x.message].join(' '), emptyText: 'No occurrences in the raw window.' })}
+    <h3 style="font-size:18px;font-weight:500;margin:36px 0 12px">Activity</h3>
+    <div class="feed" id="feed">${feedHtml(d)}</div>
+    <div class="cbox"><textarea id="cmt" class="inp" placeholder="Leave a comment (Markdown)" aria-label="Comment">${esc(VS.cmt || '')}</textarea><div style="display:flex;justify-content:flex-end;padding:8px"><button class="btn primary sm" data-act="comment" data-arg="${iss.id}">Comment</button></div></div>
+  </div>
+  <aside class="meta">
+    <div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn primary" style="flex:1;justify-content:center" data-act="setStatus" data-arg="${iss.id}|${iss.status === 'resolved' ? 'open' : 'resolved'}">${ic('cc', 15)}${iss.status === 'resolved' ? 'Reopen' : 'Resolve'}</button><button class="btn" data-act="setStatus" data-arg="${iss.id}|${iss.status === 'ignored' ? 'open' : 'ignored'}">${iss.status === 'ignored' ? 'Unignore' : 'Ignore'}</button></div>
+    <div class="kvb"><span class="k">Status</span><button class="pill" style="height:30px" data-act="issueMenu" data-arg="${iss.id}|status|${iss.status}">${esc(status)}${ic('cd', 13)}</button></div>
+    <div class="kvb"><span class="k">Assignee</span><button class="pill" style="height:30px" data-act="issueMenu" data-arg="${iss.id}|assign|${iss.assigned_to && iss.assigned_to.id || ''}">${avatar(iss.assigned_to && iss.assigned_to.id ? iss.assigned_to : null, 'sm')}<span class="ell" style="max-width:130px">${esc(iss.assigned_to ? iss.assigned_to.name || 'User #' + (iss.assigned_to.raw || '') : 'Unassigned')}</span></button></div>
+    <div class="kvb"><span class="k">Priority</span><button class="pill" style="height:30px" data-act="issueMenu" data-arg="${iss.id}|priority|${iss.priority || 'none'}">${priBars(iss.priority)}${iss.priority ? iss.priority[0].toUpperCase() + iss.priority.slice(1) : 'None'}</button></div>
+    <div class="kvb"><span class="k">First seen</span><span class="mono" title="${esc(fmtT(iss.first_seen_at))} UTC">${ago(iss.first_seen_at)}</span></div>
+    <div class="kvb"><span class="k">Last seen</span><span class="mono" title="${esc(fmtT(iss.last_seen_at))} UTC">${ago(iss.last_seen_at)}</span></div>
+    <div class="kvb"><span class="k">Occurrences</span><span class="mono">${fmtInt(iss.occurrences)}</span></div>
+    <div class="kvb"><span class="k">Users</span><span class="mono">${fmtInt(iss.users_affected)}</span></div>
+    ${(d.affected_users || []).length ? `<div class="kvb" style="flex-wrap:wrap;gap:6px"><span class="k" style="width:100%">Affected users</span>${d.affected_users.slice(0, 12).map(u => `<a data-go="users/${encodeURIComponent(u.user_id)}" title="${esc(userName(u))} · ${u.occurrences}">${avatar({ id: u.user_id, name: u.name, email: u.email }, 'sm')}</a>`).join('')}</div>` : ''}
+    ${!isPerf && iss.group_hash ? `<div class="kvb"><span class="k">Exception</span><a class="mono" style="cursor:pointer;text-decoration:underline;text-underline-offset:3px" data-go="exceptions/${esc(iss.group_hash)}">Open</a></div>` : ''}
+  </aside></div>`;
+}
+
+// ---------- settings ----------
+let SETTINGS = null;
+const THR_LABEL = { route: 'Route', job: 'Job', command: 'Command', scheduled_task: 'Scheduled task', query: 'Query', cache: 'Cache', mail: 'Mail', notification: 'Notification', outgoing_request: 'Outgoing request' };
+const THR_HINT = { route: 'GET|HEAD /api/v1/home', job: 'App\\Jobs\\SyncPrices', command: 'posts:settle', scheduled_task: 'posts:settle', query: 'select * from "posts" where "id" = ?', cache: 'home:feed', mail: 'App\\Mail\\Digest', notification: 'App\\Notifications\\Alert', outgoing_request: 'api.example.com' };
+async function vSettings() {
+  const tab = VS.stab || 'thresholds';
+  if (!SETTINGS || VS.reload) { SETTINGS = await api('/settings', {}, { fresh: true }); VS.reload = false; VS.thrRows = null; }
+  // The router resets VS on every page change while SETTINGS stays cached, so the editable rows are rebuilt here; they
+  // live apart from table('thr')'s own sort/search state (ts_ keeps that under VS.thr).
+  if (!VS.thrRows) VS.thrRows = SETTINGS.thresholds.map(t => ({ ...t }));
+  const s = SETTINGS; let body = '';
+  if (tab === 'thresholds') {
+    const dirty = JSON.stringify(VS.thrRows) !== JSON.stringify(s.thresholds);
+    body = `<div class="lh"><span class="li">${ic('sliders', 20)}</span><h3>Performance thresholds</h3><button class="btn" data-act="thrReset" ${dirty ? '' : 'disabled'}>Discard</button><button class="btn" data-act="thrSave" ${dirty ? '' : 'disabled'}>Save changes</button><button class="btn primary" data-act="addThreshold">${ic('plus', 15)}Add threshold</button></div><p class="mut" style="margin:-4px 0 18px;max-width:760px">When an execution is slower than its threshold, the NightOwl agent opens a Performance issue and alerts the channels below. A rule without a target applies to every target of that type; a specific target wins. The agent picks changes up within about 30 seconds.</p>`
+      + table('thr', [{ k: 'type', label: 'Type', w: '150px', r: x => `<span class="badge-s">${esc(THR_LABEL[x.type] || x.type)}</span>` }, { k: 'target', label: 'Target', w: 'minmax(260px,1fr)', r: x => x.target ? `<span class="mono ell" style="font-size:13.5px;display:block" title="${esc(x.target)}">${pathHtml(x.target)}</span>` : '<span class="dim">Every target (global rule)</span>' }, { k: 'duration_ms', label: 'Threshold', w: '170px', num: 1, r: x => `<span style="display:inline-flex;align-items:center;gap:6px"><input class="inp mono" type="number" min="1" max="3600000" style="width:110px;height:30px;text-align:right" data-thr="${VS.thrRows.indexOf(x)}" value="${x.duration_ms}" aria-label="Threshold in ms"><span class="dim">ms</span></span>` }, { k: 'del', h: '', w: '44px', nosort: 1, r: x => `<button class="btn sm" data-act="thrDel" data-arg="${VS.thrRows.indexOf(x)}" aria-label="Delete threshold">${ic('trash', 13)}</button>` }],
+        VS.thrRows, { emptyText: 'No thresholds yet. Add one to get Performance issues.', minw: 640 });
+  } else if (tab === 'notifications') {
+    const f = VS.chForm;
+    body = `<div class="lh"><span class="li">${ic('send', 20)}</span><h3>Alert channels</h3>${f ? '' : `<button class="btn primary" data-act="chForm">${ic('plus', 15)}Add channel</button>`}</div><p class="mut" style="margin:-4px 0 18px;max-width:760px">The NightOwl agent posts to every enabled channel when an issue opens or comes back. A webhook gets a JSON body signed with HMAC-SHA256 in <span class="mono">X-NightOwl-Signature</span>; that is where a Telegram relay plugs in. Secrets and full URLs are never shown again after saving.</p>`
+      + (f ? `<div class="panel"><div style="padding:20px;max-width:720px"><div class="field"><label for="ch-name">Name</label><input id="ch-name" class="inp" placeholder="For example: Telegram relay"></div><div class="field"><label for="ch-type">Type</label><select id="ch-type" class="inp" data-chtype="1">${s.channel_types.map(t => `<option value="${t}">${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></div><div class="field"><label for="ch-url">URL</label><input id="ch-url" class="inp mono" placeholder="https://…"><span class="help" id="ch-help">HTTPS endpoint that receives the issue events.</span></div><div class="field" id="ch-secret-f"><label for="ch-secret">Signing secret (optional)</label><input id="ch-secret" class="inp mono" autocomplete="off"></div><div class="field"><label>Send when</label>${s.events.map(e => `<label class="chk"><input type="checkbox" data-chev="${e}" checked>${e === 'issue.new' ? 'A new issue opens' : e === 'issue.reopened' ? 'A resolved issue comes back' : esc(e)}</label>`).join('')}</div><div style="display:flex;gap:8px"><button class="btn primary" data-act="chCreate">Save channel</button><button class="btn" data-act="chCancel">Cancel</button></div></div></div>` : '')
+      + (s.alert_channels.length ? `<div class="panel">${s.alert_channels.map(c => `<div class="srow"><span class="li mut">${ic(c.type === 'webhook' ? 'hook' : 'send', 18)}</span><div class="t"><b>${esc(c.name)} <span class="badge-s" style="margin-left:6px">${esc(c.type)}</span></b><small class="mono">${esc(c.url_preview || 'no URL')}${c.has_secret ? ' · signed' : ''} · ${esc((c.notify_events || s.events).join(', '))}</small></div><span class="toggle ${c.enabled ? 'on' : ''}" data-act="chToggle" data-arg="${c.id}|${c.enabled ? 0 : 1}" role="switch" aria-checked="${c.enabled}" aria-label="Enabled" tabindex="0"></span>${VS.chDel === c.id ? `<button class="btn sm danger" data-act="chDelete" data-arg="${c.id}">Confirm</button>` : `<button class="btn sm" data-act="chDelAsk" data-arg="${c.id}" aria-label="Delete channel">${ic('trash', 13)}</button>`}</div>`).join('')}</div>` : (f ? '' : '<div class="empty">No alert channels yet. Issues still show here and in MCP.</div>'));
+  } else {
+    body = `<div class="panel"><div class="srow"><div class="t"><b>Auto-resolve</b><small>Resolve open issues that have had no new occurrences for this long. Runs daily at 03:40 UTC; a new occurrence reopens the issue.</small></div><div class="seg sans">${s.auto_resolve_options.map(o => `<button class="${s.auto_resolve_days === o ? 'on' : ''}" data-act="autores" data-arg="${o ?? ''}">${o ? o + ' days' : 'Never'}</button>`).join('')}</div></div></div>`;
+  }
+  return `<div class="ph"><h1>Settings</h1></div><div class="tabs" role="tablist">${[['thresholds', 'Thresholds'], ['notifications', 'Notifications'], ['issues', 'Issues']].map(t => `<button class="${tab === t[0] ? 'on' : ''}" data-act="stab" data-arg="${t[0]}" role="tab" aria-selected="${tab === t[0]}">${t[1]}</button>`).join('')}</div>${body}`;
+}
+function thresholdDrawer() {
+  const types = (SETTINGS && SETTINGS.threshold_types) || Object.keys(THR_LABEL);
+  openDrawer('New threshold', `<div class="field"><label for="th-type">Type</label><select id="th-type" class="inp" data-thtype="1">${types.map(t => `<option value="${t}">${esc(THR_LABEL[t] || t)}</option>`).join('')}</select></div><div class="field"><label for="th-target">Target</label><input id="th-target" class="inp mono" list="th-list" placeholder="${esc(THR_HINT.route)}"><datalist id="th-list"></datalist><span class="help">Leave empty for a global rule. Routes are written as <span class="mono">METHOD /path</span>, jobs and mail by class name, outgoing requests by host.</span></div><div class="field"><label for="th-ms">Slower than (ms)</label><input id="th-ms" class="inp mono" type="number" min="1" max="3600000" value="1000"></div><button class="btn primary" data-act="saveThreshold">Add threshold</button>`);
+  fillTargets('route');
+}
+async function fillTargets(type) {
+  const dl = $('#th-list'); if (!dl) return; const src = { route: ['/routes', 'routes', x => x.threshold_target], job: ['/jobs', 'jobs', x => x.job], outgoing_request: ['/outgoing', 'outgoing', x => x.host], query: ['/queries', 'queries', x => x.sql], command: ['/commands', 'commands', x => x.command], scheduled_task: ['/commands', 'scheduled_tasks', x => x.command], mail: ['/mail', 'mail', x => x.mailable], notification: ['/mail', 'notifications', x => x.notification] }[type];
+  dl.innerHTML = ''; if (!src) return;
+  try { const d = await api(src[0], { period: '7d', limit: 100 }); dl.innerHTML = (d[src[1]] || []).map(src[2]).filter(Boolean).map(v => `<option value="${esc(v)}">`).join(''); } catch (e) { /* suggestions are optional */ }
+}
+
+// ---------- MCP ----------
+let NEWTOKEN = null;
+let MCPNAME = 'lookout'; // the server's name in MCP clients (mcp/config server_name)
+function snippet(tab, url) {
+  const tok = NEWTOKEN || '<YOUR_TOKEN>'; const n = MCPNAME; const env = n.toUpperCase().replace(/[^A-Z0-9]+/g, '_') + '_TOKEN';
+  if (tab === 'claude') return `claude mcp add --transport http ${n} \\\n  ${url} \\\n  --header "Authorization: Bearer ${tok}"`;
+  if (tab === 'codex') return `# ~/.codex/config.toml\n[mcp_servers.${n}]\nurl = "${url}"\nbearer_token_env_var = "${env}"\n\n# then, in your shell profile:\nexport ${env}="${tok}"`;
+  if (tab === 'cursor') return `// ~/.cursor/mcp.json\n{\n  "mcpServers": {\n    "${n}": {\n      "url": "${url}",\n      "headers": { "Authorization": "Bearer ${tok}" }\n    }\n  }\n}`;
+  if (tab === 'vscode') return `code --add-mcp '${JSON.stringify({ name: n, type: 'http', url, headers: { Authorization: 'Bearer ' + tok } })}'`;
+  return JSON.stringify({ mcpServers: { [n]: { type: 'http', url, headers: { Authorization: 'Bearer ' + tok } } } }, null, 2);
+}
+async function vMcp() {
+  const [cfg, tk] = await Promise.all([api('/mcp/config'), api('/mcp/tokens', {}, { fresh: true })]); const url = cfg.endpoint; VS.mcpUrl = url; if (cfg.server_name) MCPNAME = cfg.server_name;
+  const tab = VS.mtab || 'claude'; const f = VS.tokForm; const toks = tk.tokens.filter(t => VS.showRevoked || !t.revoked_at);
+  const vsLink = 'vscode:mcp/install?' + encodeURIComponent(JSON.stringify({ name: MCPNAME, type: 'http', url, headers: { Authorization: 'Bearer ' + (NEWTOKEN || '<YOUR_TOKEN>') } }));
+  return `<div class="ph"><h1>MCP</h1></div><p class="mut" style="margin:-10px 0 24px;max-width:760px">Let coding agents read issues, traces, slow routes and logs from this monitoring. A token can also resolve issues if you allow it.</p>
+  <div class="panel"><div class="panel-h">${ic('plug', 16)}<h3>Endpoint</h3><span class="badge-s green">Streamable HTTP</span></div><div style="padding:18px 20px"><div class="copyrow"><code>${esc(url)}</code><button class="btn" data-act="copyText" data-arg="${esc(url)}">${ic('copy', 14)}Copy</button></div><div class="note" style="margin-top:14px">${ic('ac', 16)}<span>Claude on the web and in the desktop app connects with OAuth. That comes in a later release; until then use a personal token with Claude Code or another client below.</span></div></div></div>
+  <div class="panel"><div class="panel-h">${ic('key', 16)}<h3>Personal tokens</h3>${f ? '' : `<button class="btn primary sm" data-act="tokForm">${ic('plus', 14)}Create token</button>`}</div>
+  <div style="padding:18px 20px">
+  ${NEWTOKEN ? `<div class="once"><div style="font-weight:500;margin-bottom:4px">Copy your token now</div><div class="mut" style="font-size:13px;margin-bottom:10px">You won't be able to see it again. Paste it into one of the setups below.</div><div class="copyrow"><code id="newtok">${esc(NEWTOKEN)}</code><button class="btn" data-act="copyText" data-arg="${esc(NEWTOKEN)}">${ic('copy', 14)}Copy</button><button class="btn" data-act="hideTok">Done</button></div></div>` : ''}
+  ${f ? `<div class="tokform"><div class="field"><label for="tk-name">Name</label><input id="tk-name" class="inp" maxlength="100" placeholder="For example: Laptop · Claude Code"></div><label class="chk" style="margin-bottom:6px"><input type="checkbox" id="tk-resolve">Allow resolving issues</label><div class="help mut" style="font-size:12.5px;margin:0 0 16px 26px">Off: the agent can only read. On: it can also resolve, ignore and reopen issues; every change shows in the issue's activity with an MCP badge.</div><div style="display:flex;gap:8px"><button class="btn primary" data-act="createTok">Create token</button><button class="btn" data-act="tokCancel">Cancel</button></div></div>` : ''}
+  ${table('tokens', [{ k: 'name', label: 'Name', w: 'minmax(200px,1fr)', r: x => `<div class="cell2"><b>${esc(x.name)}${x.revoked_at ? ' <span class="badge-s">revoked</span>' : ''}</b><small>${esc(x.prefix)}… · ${x.can_resolve ? 'read · resolve issues' : 'read only'}</small></div>` }, { k: 'can_resolve', label: 'Resolve', w: '84px', r: x => x.revoked_at ? '<span class="dim">—</span>' : `<span class="toggle ${x.can_resolve ? 'on' : ''}" data-act="tokResolve" data-arg="${x.id}|${x.can_resolve ? 0 : 1}" role="switch" aria-checked="${x.can_resolve}" aria-label="Allow resolving issues" tabindex="0"></span>` }, agoCell('created_at', 'Created', '110px'), { k: 'last_used_at', label: 'Last used', w: '110px', num: 1, v: x => tms(x.last_used_at), r: x => `<span class="mono">${x.last_used_at ? ago(x.last_used_at) : 'never'}</span>` }, { k: 'rv', h: '', w: '96px', nosort: 1, r: x => x.revoked_at ? '' : VS.confirmRevoke === x.id ? `<button class="btn sm danger" data-act="revoke" data-arg="${x.id}">Confirm</button>` : `<button class="btn sm" data-act="revokeAsk" data-arg="${x.id}">Revoke</button>` }], toks, { minw: 640, emptyText: 'No tokens yet.' })}
+  ${tk.tokens.some(t => t.revoked_at) ? `<button class="btn sm" style="margin-top:10px" data-act="toggleRevoked">${VS.showRevoked ? 'Hide' : 'Show'} revoked tokens</button>` : ''}
+  </div></div>
+  <div class="panel"><div class="panel-h">${ic('braces', 16)}<h3>Connect a client</h3></div><div style="padding:6px 20px 20px"><div class="tabs" style="margin-bottom:16px;overflow-x:auto">${[['claude', 'Claude Code'], ['codex', 'Codex'], ['cursor', 'Cursor'], ['vscode', 'VS Code'], ['other', 'Other (JSON)']].map(t => `<button class="${tab === t[0] ? 'on' : ''}" data-act="mtab" data-arg="${t[0]}">${t[1]}</button>`).join('')}</div>
+  ${tab === 'vscode' ? `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><a class="btn primary" href="${esc(vsLink)}" style="text-decoration:none">Install in VS Code</a><span class="mut" style="font-size:13px">Opens VS Code through a <span class="mono">vscode:</span> link. If nothing happens, run the command below.</span></div>` : ''}
+  <pre class="box" id="snip">${esc(snippet(tab, url))}</pre><div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn sm" data-act="copySnip">${ic('copy', 13)}Copy</button>${NEWTOKEN ? '<span class="mut" style="font-size:13px">Your new token is already filled in.</span>' : '<span class="mut" style="font-size:13px">Replace &lt;YOUR_TOKEN&gt; with a token from above.</span>'}</div>
+  <div class="mut" style="font-size:13px;margin-top:18px">Tools: <span class="mono">list_issues</span>, <span class="mono">get_issue</span>, <span class="mono">slow_routes</span>, <span class="mono">slow_queries</span>, <span class="mono">failed_jobs</span>, <span class="mono">resolve_issue</span> (needs the permission).</div></div></div>`;
+}
