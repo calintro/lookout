@@ -187,7 +187,7 @@ Lookout reads through the `nightowl_read` connection. If `config/database.php` d
 
 - `SELECT` on the NightOwl tables;
 - `UPDATE` on `nightowl_issues` and `INSERT` on `nightowl_issue_activity` and `nightowl_issue_comments`, for issue edits;
-- writes on `nightowl_settings` and `nightowl_alert_channels`, for the Settings page and the Telegram watermark.
+- writes on `nightowl_settings` and `nightowl_alert_channels`, for the Settings page and the Telegram delivery progress.
 
 ### Nova mode
 
@@ -251,7 +251,7 @@ All keys live in `config/lookout.php`.
 | `telegram.environment` | `null` | `LOOKOUT_TELEGRAM_ENVIRONMENT`. Whose issues go to Telegram: `null` is this app's environment, `*` is every environment. |
 | `mcp.*` | see below | The MCP server. |
 
-To keep auto-resolve days, Telegram channels and the Telegram watermark next to your other settings, bind your own `Lookout\Contracts\SettingStore`. The default store uses `nightowl_settings`.
+To keep auto-resolve days, Telegram channels and their delivery progress next to your other settings, bind your own `Lookout\Contracts\SettingStore`. The default store uses `nightowl_settings`.
 
 To narrow who issues can be assigned to, set a scope. The default is every user the gate lets in, checked one by one among the first 2,000 users by name, so set a scope on apps with large user tables:
 
@@ -274,9 +274,9 @@ How delivery works:
 
 - `lookout:telegram-notify` runs every minute from Laravel's scheduler, so `php artisan schedule:run` must be running (cron or `schedule:work`). It runs with `withoutOverlapping()` and `onOneServer()`; the latter needs a cache store that supports locks.
 - It reads NightOwl's own records. A new issue is one created since the last run. A reopened issue is one the agent reopened because it came back after being resolved; reopening by hand in Lookout sends nothing. These are the same two events the agent's own channels get.
-- The first run only records the current time, so no history is sent. After that, each issue event goes out once per channel. At most 20 messages go to one channel per run; the rest are counted in one "and N more" message.
+- The first run only records the current time, so no history is sent. A channel added later starts when it is added, and a disabled channel gets nothing from while it was off. After that, each issue event goes out once per channel, oldest first. At most 20 messages go to one channel per run; the rest are counted in one "and N more" message.
 - Only issues of this app's environment are sent (`nightowl.environment`, else `app.env`). `LOOKOUT_TELEGRAM_ENVIRONMENT=*` sends every environment.
-- If a send fails, the error is logged without the token. Delivery to the other channels goes on. The failed message is retried on the next one or two runs, then dropped.
+- Each channel keeps its own position in the setting store (`monitoring.telegram_progress.<environment>`). If a send fails, the error is logged without the token, that channel stops for this run, and its position stays at the message that failed: the next run retries from there, however long Telegram or the network was down. Messages that went out before the failure are not sent again. Delivery to the other channels goes on.
 - If your servers cannot reach `api.telegram.org`, point `LOOKOUT_TELEGRAM_API_BASE` at a proxy that forwards `/bot<token>/sendMessage`.
 - `LOOKOUT_TELEGRAM_ENABLED=false` stops the schedule and the command.
 

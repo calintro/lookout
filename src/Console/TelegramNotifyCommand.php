@@ -6,29 +6,34 @@ use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Lookout\Contracts\SettingStore;
 use Lookout\Lookout;
 use Lookout\Services\Telegram;
 use Lookout\Services\TelegramChannels;
+use Lookout\Services\TelegramProgress;
 
 /**
  * Posts issues that became new or were reopened to the Telegram channels in Lookout settings. Reads the agent's own
  * records: a new issue is a nightowl_issues row created after the watermark, a reopen is the status_changed
  * resolved -> open activity row the agent writes when an issue recurs (the same two events its AlertNotifier sends).
  *
- * The watermark lives in the SettingStore, one per environment scope, and starts at the first run (no history). Each
- * run reads (watermark, now] and moves the watermark to now - OVERLAP_SECONDS, so rows the agent commits a little
- * late are still seen; a cache key per channel and event, set right after each send, keeps the overlap and a crash
- * between sending and saving from posting twice. A failed send stops that channel for the run and is retried while
- * the event is inside the overlap.
+ * Each channel has its own watermark (TelegramProgress), so one channel that cannot be reached holds back neither the
+ * others nor its own events. A run reads (oldest watermark, now] and gives each channel what it has not had yet, oldest
+ * first. A channel's watermark moves only over events it was sent (or counted in the "…and N more" message) and never
+ * past now - OVERLAP_SECONDS, so rows the agent commits a little late are still seen; the events after the watermark
+ * that were already sent are kept with it, so re-reading them sends nothing twice. On a failed send the channel stops
+ * for this run and its watermark stays just before the event that failed: the next run retries from there, however
+ * long the outage lasts. A cache key per channel and event, set right after each send, keeps a crash between sending
+ * and saving from posting twice.
  */
 class TelegramNotifyCommand extends Command
 {
-    public const WATERMARK_KEY = 'monitoring.telegram_watermark';
+    /** @deprecated The watermark of all channels together before 0.2.1; see TelegramProgress::LEGACY_KEY. */
+    public const WATERMARK_KEY = TelegramProgress::LEGACY_KEY;
 
     public const OVERLAP_SECONDS = 120;
 
-    public const DEDUPE_SECONDS = 3600;
+    /** How long the cache remembers a sent event: longer than any outage a retry is expected to bridge. */
+    public const DEDUPE_SECONDS = 7 * 86400;
 
     /** Most events of each kind read in one run. */
     public const SCAN_LIMIT = 1000;
@@ -37,7 +42,7 @@ class TelegramNotifyCommand extends Command
 
     protected $description = 'Post new and reopened NightOwl issues to the Telegram channels in Lookout settings';
 
-    public function handle(TelegramChannels $channels, Telegram $telegram, SettingStore $store): int
+    public function handle(TelegramChannels $channels, TelegramProgress $progress, Telegram $telegram): int
     {
         if (! config('lookout.telegram.enabled', true)) {
             $this->info('Telegram alerts are off (lookout.telegram.enabled).');
@@ -46,32 +51,42 @@ class TelegramNotifyCommand extends Command
         }
 
         $scope = self::environmentScope();
-        $key = self::WATERMARK_KEY.'.'.($scope ?? '*');
         $now = CarbonImmutable::now('UTC');
         $upto = $now->format('Y-m-d H:i:s');
-        $watermark = $store->get($key);
+        $all = $channels->all();
 
-        if (! is_string($watermark) || preg_match('/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/', $watermark) !== 1) {
-            $this->saveWatermark($store, $key, $upto);
-            $this->info('Started: issues from now on are sent.');
-
-            return self::SUCCESS;
+        if (! $progress->exists($scope)) {
+            $this->info($progress->migrate($scope, $all, $upto)
+                ? 'Took over the shared watermark: each channel goes on from there.'
+                : 'Started: issues from now on are sent.');
         }
+        $entries = $progress->load($scope, $all, $upto);
 
-        $targets = array_values(array_filter($channels->all(), fn (array $c): bool => (bool) ($c['enabled'] ?? true)));
-        $sent = 0;
-        if ($targets !== []) {
-            $events = $this->events($watermark, $upto, $scope);
-            foreach ($targets as $channel) {
-                $sent += $this->deliver($channel, $events, $telegram, $scope);
+        $targets = [];
+        foreach ($all as $channel) {
+            $id = (int) $channel['id'];
+            if ((bool) ($channel['enabled'] ?? true)) {
+                $targets[] = $channel;
+            } else {
+                // A disabled channel gets nothing, then or later: once enabled again it goes on from then.
+                $entries[$id] = ['at' => max($entries[$id]['at'], $upto), 'sent' => [], 'channel' => $entries[$id]['channel']];
             }
         }
 
-        // Y-m-d H:i:s strings order like the instants they name.
-        $next = max($watermark, $now->subSeconds(self::OVERLAP_SECONDS)->format('Y-m-d H:i:s'));
-        if ($next !== $watermark) {
-            $this->saveWatermark($store, $key, $next);
+        $sent = 0;
+        if ($targets !== []) {
+            $from = min(array_map(fn (array $c): string => $entries[(int) $c['id']]['at'], $targets));
+            [$events, $horizon] = $this->events($from, $upto, $scope);
+            // Y-m-d H:i:s strings order like the instants they name.
+            $settled = min($horizon, $now->subSeconds(self::OVERLAP_SECONDS)->format('Y-m-d H:i:s'));
+            foreach ($targets as $channel) {
+                $id = (int) $channel['id'];
+                [$entries[$id], $count] = $this->deliver($channel, $entries[$id], $events, $settled, $telegram, $scope);
+                $sent += $count;
+            }
         }
+
+        $progress->save($scope, $entries, array_map(fn (array $c): int => (int) $c['id'], $channels->all()));
         $this->info("Sent {$sent} Telegram message(s).");
 
         return self::SUCCESS;
@@ -82,19 +97,14 @@ class TelegramNotifyCommand extends Command
      */
     public static function environmentScope(): ?string
     {
-        $configured = config('lookout.telegram.environment');
-        if ($configured === '*') {
-            return null;
-        }
-        $environment = $configured ?: (config('nightowl.environment') ?: config('app.env'));
-
-        return is_string($environment) && $environment !== '' ? $environment : null;
+        return TelegramProgress::scope();
     }
 
     /**
-     * New and reopened issues in (from, upto], oldest first.
+     * New and reopened issues in (from, upto], oldest first, and how far they reach: upto, or less when a kind hit
+     * SCAN_LIMIT (the rest is read by a later run).
      *
-     * @return list<array{event: string, key: string, at: string, issue: object}>
+     * @return array{0: list<array{event: string, key: string, at: string, issue: object}>, 1: string}
      */
     private function events(string $from, string $upto, ?string $scope): array
     {
@@ -114,38 +124,85 @@ class TelegramNotifyCommand extends Command
             ->get(['i.*', 'a.id as activity_id', 'a.created_at as event_at'])
             ->map(fn (object $i): array => ['event' => 'issue.reopened', 'key' => "reopened:{$i->id}:{$i->activity_id}", 'at' => (string) $i->event_at, 'issue' => $i]);
 
-        return $new->concat($reopened)->sortBy([['at', 'asc'], fn (array $a, array $b): int => $a['issue']->id <=> $b['issue']->id])->values()->all();
+        $horizon = $upto;
+        foreach ([$new, $reopened] as $kind) {
+            if ($kind->count() >= self::SCAN_LIMIT) {
+                // Rows in the last second read may go on past the limit: settle only up to the second before it.
+                $horizon = min($horizon, self::secondBefore((string) $kind->last()['at']));
+            }
+        }
+
+        $events = $new->concat($reopened)
+            ->sortBy([['at', 'asc'], fn (array $a, array $b): int => $a['issue']->id <=> $b['issue']->id])->values()->all();
+
+        return [$events, $horizon];
     }
 
     /**
-     * Up to --limit messages to one channel, then one summary for the rest. Returns how many messages went out.
+     * Up to --limit messages to one channel, oldest first, then one summary for the rest. Returns the channel's new
+     * progress and how many messages went out.
      *
      * @param  array<string, mixed>  $channel
+     * @param  array{at: string, sent: array<string, string>, channel: ?string}  $entry
      * @param  list<array{event: string, key: string, at: string, issue: object}>  $events
+     * @return array{0: array{at: string, sent: array<string, string>, channel: ?string}, 1: int}
      */
-    private function deliver(array $channel, array $events, Telegram $telegram, ?string $scope): int
+    private function deliver(array $channel, array $entry, array $events, string $settled, Telegram $telegram, ?string $scope): array
     {
-        $todo = array_values(array_filter($events, fn (array $ev): bool => TelegramChannels::wants($channel, $ev['event']) && ! Cache::has(self::sentKey($channel, $ev))));
+        $todo = [];
+        foreach ($events as $ev) {
+            if ($ev['at'] <= $entry['at'] || isset($entry['sent'][$ev['key']]) || ! TelegramChannels::wants($channel, $ev['event'])) {
+                continue;
+            }
+            if (Cache::has(self::sentKey($channel, $ev))) {
+                $entry['sent'][$ev['key']] = $ev['at'];
+
+                continue;
+            }
+            $todo[] = $ev;
+        }
+
         $limit = max(1, (int) $this->option('limit'));
         $sent = 0;
+        $failed = null;
 
         foreach (array_slice($todo, 0, $limit) as $ev) {
             if ($telegram->send($channel, $telegram->issueMessage($ev['issue'], $ev['event'])) !== null) {
-                return $sent;
+                $failed = $ev;
+                break;
             }
-            Cache::put(self::sentKey($channel, $ev), true, self::DEDUPE_SECONDS);
+            $this->handled($channel, $entry, $ev);
             $sent++;
         }
 
         $rest = array_slice($todo, $limit);
-        if ($rest !== [] && $telegram->send($channel, $telegram->summaryMessage(count($rest), $scope)) === null) {
-            foreach ($rest as $ev) {
-                Cache::put(self::sentKey($channel, $ev), true, self::DEDUPE_SECONDS);
+        if ($failed === null && $rest !== []) {
+            if ($telegram->send($channel, $telegram->summaryMessage(count($rest), $scope)) === null) {
+                foreach ($rest as $ev) {
+                    $this->handled($channel, $entry, $ev);
+                }
+                $sent++;
+            } else {
+                $failed = $rest[0];
             }
-            $sent++;
         }
 
-        return $sent;
+        $target = $failed !== null ? min($settled, self::secondBefore($failed['at'])) : $settled;
+        $entry['at'] = max($entry['at'], $target);
+        $entry['sent'] = array_filter($entry['sent'], fn (string $at): bool => $at > $entry['at']);
+
+        return [$entry, $sent];
+    }
+
+    /**
+     * @param  array<string, mixed>  $channel
+     * @param  array{at: string, sent: array<string, string>, channel: ?string}  $entry
+     * @param  array{key: string, at: string}  $event
+     */
+    private function handled(array $channel, array &$entry, array $event): void
+    {
+        Cache::put(self::sentKey($channel, $event), true, self::DEDUPE_SECONDS);
+        $entry['sent'][$event['key']] = $event['at'];
     }
 
     /**
@@ -157,8 +214,8 @@ class TelegramNotifyCommand extends Command
         return 'lookout:telegram:'.$channel['id'].':'.substr(md5((string) ($channel['chat_id'] ?? '')), 0, 8).':'.$event['key'];
     }
 
-    private function saveWatermark(SettingStore $store, string $key, string $value): void
+    private static function secondBefore(string $at): string
     {
-        $store->put($key, $value, 'Monitoring: issues created or reopened up to this UTC time were handled by lookout:telegram-notify.');
+        return CarbonImmutable::parse($at, 'UTC')->startOfSecond()->subSecond()->format('Y-m-d H:i:s');
     }
 }

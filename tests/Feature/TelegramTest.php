@@ -5,6 +5,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -12,6 +13,7 @@ use Illuminate\Support\Facades\Schema;
 use Lookout\Console\TelegramNotifyCommand;
 use Lookout\Contracts\SettingStore;
 use Lookout\Services\TelegramChannels;
+use Lookout\Services\TelegramProgress;
 
 const TG_TOKEN = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw';
 
@@ -89,6 +91,14 @@ function tgReopen(int $issueId, string $at, string $actor = 'agent'): void
     DB::connection('testing')->table('nightowl_issue_activity')->insert([
         'issue_id' => $issueId, 'actor_type' => $actor, 'action' => 'status_changed', 'old_value' => 'resolved', 'new_value' => 'open', 'created_at' => $at,
     ]);
+}
+
+/** Each channel's watermark in the production scope, by channel id. */
+function tgWatermarks(?string $scope = 'production'): array
+{
+    $stored = app(SettingStore::class)->get(TelegramProgress::key($scope));
+
+    return is_array($stored) ? array_map(fn (array $e): string => $e['at'], $stored['channels']) : [];
 }
 
 /** Texts posted to Telegram, in order. */
@@ -206,7 +216,7 @@ it('starts at the first run without sending history, then sends new and reopened
 
     $this->artisan('lookout:telegram-notify')->assertSuccessful();
     Http::assertNothingSent();
-    expect(app(SettingStore::class)->get(TelegramNotifyCommand::WATERMARK_KEY.'.production'))->toBe('2026-11-19 10:00:00');
+    expect(tgWatermarks())->toBe([1 => '2026-11-19 10:00:00']);
 
     $this->travelTo($this->t0->addSeconds(60));
     $new = tgIssue('2026-11-19 10:00:30');
@@ -318,6 +328,170 @@ it('does nothing while Telegram alerts are off', function () {
 
     $this->artisan('lookout:telegram-notify')->assertSuccessful();
 
-    expect(app(SettingStore::class)->get(TelegramNotifyCommand::WATERMARK_KEY.'.production'))->toBeNull();
+    expect(app(SettingStore::class)->get(TelegramProgress::key('production')))->toBeNull();
+    Http::assertNothingSent();
+});
+
+it('keeps each channel\'s events through an outage longer than the overlap and sends each once, in order', function () {
+    tgChannel();
+    $this->artisan('lookout:telegram-notify')->assertSuccessful(); // starts at 10:00:00
+
+    /** @var list<string> $delivered */
+    $delivered = [];
+    $down = true;
+    $failures = 0;
+    $this->tgReply = function (Request $r) use (&$delivered, &$down, &$failures) {
+        if ($down) {
+            return ++$failures % 2 === 1 ? Http::response(['ok' => false, 'description' => 'Bad Gateway'], 502)
+                : throw new ConnectionException('cURL error 7: Failed to connect');
+        }
+        $delivered[] = $r['text'];
+
+        return Http::response(['ok' => true, 'result' => ['message_id' => count($delivered)]]);
+    };
+
+    $first = tgIssue('2026-11-19 10:00:30');
+    $second = tgIssue('2026-11-19 10:00:30');
+    $reopened = tgIssue('2026-11-19 07:00:00');
+    tgReopen($reopened, '2026-11-19 10:03:00');
+    $late = null;
+    foreach ([60, 120, 300, 600, 1800, 3600] as $at) {
+        $this->travelTo($this->t0->addSeconds($at));
+        if ($at === 1800) {
+            $late = tgIssue('2026-11-19 10:20:00');
+        }
+        $this->artisan('lookout:telegram-notify')->assertSuccessful();
+        Cache::flush(); // the watermark alone has to be enough
+    }
+    expect($delivered)->toBe([])
+        ->and(tgWatermarks()[1])->toBe('2026-11-19 10:00:29');
+
+    $down = false;
+    $this->travelTo($this->t0->addSeconds(3660));
+    $this->artisan('lookout:telegram-notify')->assertSuccessful();
+    foreach ([3720, 3780, 7200] as $at) {
+        Cache::flush();
+        $this->travelTo($this->t0->addSeconds($at));
+        $this->artisan('lookout:telegram-notify')->assertSuccessful();
+    }
+
+    expect($delivered)->toHaveCount(4)
+        ->and($delivered[0])->toContain("New issue #{$first}</b>")
+        ->and($delivered[1])->toContain("New issue #{$second}</b>")
+        ->and($delivered[2])->toContain("Reopened #{$reopened}</b>")
+        ->and($delivered[3])->toContain("New issue #{$late}</b>")
+        ->and(tgWatermarks()[1])->toBe('2026-11-19 11:58:00');
+});
+
+it('retries from the first undelivered event when a channel fails half way through a run', function () {
+    tgChannel();
+    app(SettingStore::class)->put(TelegramNotifyCommand::WATERMARK_KEY.'.production', '2026-11-19 09:50:00');
+    $ids = [tgIssue('2026-11-19 09:51:00'), tgIssue('2026-11-19 09:52:00'), tgIssue('2026-11-19 09:52:00'), tgIssue('2026-11-19 09:53:00')];
+    $delivered = [];
+    $calls = 0;
+    $this->tgReply = function (Request $r) use (&$delivered, &$calls) {
+        if (++$calls === 3) {
+            return Http::response(['ok' => false, 'description' => 'Too Many Requests: retry after 5'], 429);
+        }
+        $delivered[] = $r['text'];
+
+        return Http::response(['ok' => true]);
+    };
+
+    $this->artisan('lookout:telegram-notify')->assertSuccessful();
+    expect($delivered)->toHaveCount(2)->and(tgWatermarks()[1])->toBe('2026-11-19 09:51:59');
+
+    Cache::flush();
+    $this->travelTo($this->t0->addSeconds(60));
+    $this->artisan('lookout:telegram-notify')->assertSuccessful();
+
+    expect(array_map(fn (string $t): int => (int) preg_replace('/^.*?#(\d+).*$/s', '$1', $t), $delivered))->toBe($ids);
+});
+
+it('does not let a failing channel hold back the others', function () {
+    tgChannel(['name' => 'Broken', 'chat_id' => '@broken_chat']);
+    tgChannel(['name' => 'Good', 'chat_id' => '@working_chat']);
+    $this->artisan('lookout:telegram-notify')->assertSuccessful();
+    $brokenDown = true;
+    $got = ['@broken_chat' => [], '@working_chat' => []];
+    $this->tgReply = function (Request $r) use (&$got, &$brokenDown) {
+        if ($brokenDown && $r['chat_id'] === '@broken_chat') {
+            return Http::response(['ok' => false, 'description' => 'Internal Server Error'], 500);
+        }
+        $got[$r['chat_id']][] = (int) preg_replace('/^.*?#(\d+).*$/s', '$1', $r['text']);
+
+        return Http::response(['ok' => true]);
+    };
+
+    $a = tgIssue('2026-11-19 10:00:30');
+    $this->travelTo($this->t0->addSeconds(60));
+    $this->artisan('lookout:telegram-notify')->assertSuccessful();
+    expect($got['@working_chat'])->toBe([$a]);
+
+    $b = tgIssue('2026-11-19 10:09:00');
+    $this->travelTo($this->t0->addSeconds(600));
+    $this->artisan('lookout:telegram-notify')->assertSuccessful();
+    expect($got['@working_chat'])->toBe([$a, $b])->and($got['@broken_chat'])->toBe([])
+        ->and(tgWatermarks())->toBe([1 => '2026-11-19 10:00:29', 2 => '2026-11-19 10:08:00']);
+
+    $brokenDown = false;
+    $this->travelTo($this->t0->addSeconds(660));
+    $this->artisan('lookout:telegram-notify')->assertSuccessful();
+    expect($got['@broken_chat'])->toBe([$a, $b])->and($got['@working_chat'])->toBe([$a, $b]);
+});
+
+it('takes over the shared watermark of earlier versions once, without history or gaps', function () {
+    tgChannel(['chat_id' => '@first']);
+    tgChannel(['chat_id' => '@second']);
+    app(SettingStore::class)->put(TelegramNotifyCommand::WATERMARK_KEY.'.production', '2026-11-19 09:58:00');
+    tgIssue('2026-11-19 09:57:00'); // handled by the old version
+    $missed = tgIssue('2026-11-19 09:59:00');
+
+    $this->artisan('lookout:telegram-notify')->assertSuccessful()->expectsOutputToContain('Took over the shared watermark');
+
+    $sent = Http::recorded()->map(fn (array $p): array => [$p[0]['chat_id'], (int) preg_replace('/^.*?#(\d+).*$/s', '$1', $p[0]['text'])])->all();
+    expect($sent)->toBe([['@first', $missed], ['@second', $missed]])
+        ->and(tgWatermarks())->toBe([1 => '2026-11-19 09:58:00', 2 => '2026-11-19 09:58:00']);
+
+    // The old key is read only once: moving it later changes nothing.
+    app(SettingStore::class)->put(TelegramNotifyCommand::WATERMARK_KEY.'.production', '2026-11-19 09:00:00');
+    $this->travelTo($this->t0->addSeconds(60));
+    $this->artisan('lookout:telegram-notify')->assertSuccessful();
+    expect(Http::recorded())->toHaveCount(2);
+});
+
+it('starts a new channel at now and drops the watermark of a deleted one', function () {
+    $this->actingAs($this->admin());
+    tgChannel(['chat_id' => '@old_channel']);
+    $this->artisan('lookout:telegram-notify')->assertSuccessful();
+    $before = tgIssue('2026-11-19 10:00:30');
+
+    $this->travelTo($this->t0->addSeconds(60));
+    $id = $this->postJson('/lookout/api/settings/telegram', ['name' => 'New', 'bot_token' => TG_TOKEN, 'chat_id' => '@new_channel'])->assertCreated()->json('channel.id');
+    expect(tgWatermarks()[$id])->toBe('2026-11-19 10:01:00');
+    $after = tgIssue('2026-11-19 10:01:30');
+
+    $this->travelTo($this->t0->addSeconds(120));
+    $this->artisan('lookout:telegram-notify')->assertSuccessful();
+
+    $sent = Http::recorded()->map(fn (array $p): array => [$p[0]['chat_id'], (int) preg_replace('/^.*?#(\d+).*$/s', '$1', $p[0]['text'])])->all();
+    expect($sent)->toBe([['@old_channel', $before], ['@old_channel', $after], ['@new_channel', $after]]);
+
+    $this->deleteJson("/lookout/api/settings/telegram/{$id}")->assertOk();
+    expect(array_keys(tgWatermarks()))->toBe([1]);
+});
+
+it('sends a disabled channel nothing from while it was off', function () {
+    $this->actingAs($this->admin());
+    $id = tgChannel(['enabled' => false])['id'];
+    $this->artisan('lookout:telegram-notify')->assertSuccessful();
+    tgIssue('2026-11-19 10:00:30');
+
+    $this->travelTo($this->t0->addSeconds(60));
+    $this->artisan('lookout:telegram-notify')->assertSuccessful();
+    $this->patchJson("/lookout/api/settings/telegram/{$id}", ['enabled' => true])->assertOk();
+    $this->travelTo($this->t0->addSeconds(120));
+    $this->artisan('lookout:telegram-notify')->assertSuccessful();
+
     Http::assertNothingSent();
 });

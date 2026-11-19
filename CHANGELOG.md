@@ -4,6 +4,15 @@ All notable changes to Lookout are documented here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-19
+
+### Fixed
+
+- Telegram alerts were lost after an outage longer than two minutes. `lookout:telegram-notify` kept one watermark for all channels and moved it to two minutes before now on every run, also when a send had failed, so an event that could not be delivered for longer than that was never sent. Each channel now has its own watermark in the setting store (`monitoring.telegram_progress.<environment>`). It moves only over events that were sent or counted in the "…and N more" message; after a failure it stays just before the event that failed, and the next run retries from there. One channel that cannot be reached no longer holds back the others.
+  - Events already sent before a failure, or again inside the two-minute overlap, are not sent twice: the events after each watermark that went out are stored with it, and the per-event cache entry now lasts 7 days instead of an hour.
+  - On the first run after the update, every existing channel takes over the old shared watermark (`monitoring.telegram_watermark.<environment>`), so nothing is sent again and nothing is skipped. The old key is not read after that.
+  - A channel created later starts at its creation, with no history. A disabled channel's watermark follows the clock, so enabling it again sends nothing from while it was off. Deleting a channel deletes its watermark.
+
 ## [0.2.0] - 2026-11-19
 
 ### Added

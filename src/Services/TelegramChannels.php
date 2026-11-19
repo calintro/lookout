@@ -9,6 +9,7 @@ use Lookout\Contracts\SettingStore;
  * other row in nightowl_alert_channels), so these live in Lookout's SettingStore under KEY as a list of
  * {id, name, bot_token, chat_id, message_thread_id, enabled, notify_events, created_at, updated_at}, and
  * lookout:telegram-notify delivers them. The bot token is a secret: it never leaves the server again after saving.
+ * Creating a channel starts its delivery progress (TelegramProgress) at now; deleting one drops it.
  */
 class TelegramChannels
 {
@@ -20,7 +21,7 @@ class TelegramChannels
     /** A numeric chat id (negative for groups and channels) or a public @username. */
     public const CHAT_PATTERN = '/^(-?\d+|@[A-Za-z0-9_]{5,})$/';
 
-    public function __construct(private SettingStore $store) {}
+    public function __construct(private SettingStore $store, private TelegramProgress $progress) {}
 
     /**
      * Every channel as stored, the token included: for the sender only.
@@ -68,6 +69,7 @@ class TelegramChannels
             'updated_at' => $now,
         ];
         $this->save([...$channels, $channel]);
+        $this->progress->start($channel);
 
         return self::present($channel);
     }
@@ -113,6 +115,7 @@ class TelegramChannels
             return false;
         }
         $this->save($kept);
+        $this->progress->forget($id);
 
         return true;
     }
