@@ -100,8 +100,25 @@ class LookoutServiceProvider extends ServiceProvider
 
         if (config('lookout.mcp.enabled', true) && class_exists(Mcp::class)) {
             Mcp::web('/'.trim((string) config('lookout.mcp.path', 'mcp/lookout'), '/'), LookoutServer::class)
-                ->middleware([AuthenticateMcpToken::class, ThrottleRequests::using((string) config('lookout.mcp.rate_limiter', 'lookout-mcp'))]);
+                ->middleware([AuthenticateMcpToken::class, ...self::mcpMiddleware()]);
         }
+    }
+
+    /**
+     * What runs after the token check on the MCP route: lookout.mcp.middleware, or by default ThrottleRequests with
+     * lookout.mcp.rate_limiter (per credential, see rateLimiter()).
+     *
+     * @return list<mixed>
+     */
+    public static function mcpMiddleware(): array
+    {
+        $middleware = config('lookout.mcp.middleware');
+
+        if ($middleware === null) {
+            return [ThrottleRequests::using((string) config('lookout.mcp.rate_limiter', 'lookout-mcp'))];
+        }
+
+        return array_values((array) $middleware);
     }
 
     /**

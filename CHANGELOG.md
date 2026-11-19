@@ -4,13 +4,19 @@ All notable changes to Lookout are documented here. The format follows [Keep a C
 
 ## [Unreleased]
 
-### Fixed
-
-- Issue numbers show as `#123`. They carried a hard-coded `AF-` prefix from the app Lookout was extracted from.
+## [0.1.1] - 2026-11-19
 
 ### Added
 
+- `mcp.middleware`: the middleware after the MCP token check. `null` (the default) keeps `ThrottleRequests` with `mcp.rate_limiter`, so existing installs are unchanged; a list replaces it, for apps with their own limiter.
+- `mcp.tokens_connection` (`LOOKOUT_MCP_TOKENS_CONNECTION`): the connection of the MCP tokens table. On another connection than the users table the table gets an index on `user_id` and no foreign key, and token owners are still loaded from the users connection.
+- `mcp.user_id_type` (`bigint` or `int`): the type of `user_id` in the tokens table. `null` reads `users.id` when the migration runs.
 - README screenshots, a comparison with similar tools, CI on PHP 8.3 to 8.5 with Laravel 12 and 13, contributing and security guides, issue templates.
+
+### Fixed
+
+- The MCP tokens migration failed on MySQL apps whose `users.id` is `INT UNSIGNED`: `user_id` was always `BIGINT`, and MySQL refused the foreign key. It now follows `users.id`.
+- Issue numbers show as `#123`. They carried a hard-coded `AF-` prefix from the app Lookout was extracted from.
 
 ## [0.1.0] - 2026-11-19
 

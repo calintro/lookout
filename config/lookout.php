@@ -71,6 +71,11 @@ return [
     | (token_prefix: at most 12 characters; stored in tokens_table) or by the shared token, which acts as user_id.
     | 'gate' is the ability a token's user must pass (null = the app's gate). per_minute is the limit per
     | credential, under rate_limiter.
+    |
+    | middleware: what runs after the token check; null = ThrottleRequests with rate_limiter, a list replaces it
+    | (e.g. the app's own limiter). tokens_connection: where tokens_table lives (null = the default connection);
+    | on another connection than the users table, user_id gets an index but no foreign key. user_id_type: 'bigint'
+    | or 'int' (both unsigned where the database has it); null reads users.id when the migration runs.
     */
     'mcp' => [
         'enabled' => (bool) env('LOOKOUT_MCP_ENABLED', true),
@@ -80,6 +85,9 @@ return [
         'user_id' => env('LOOKOUT_MCP_USER_ID'),
         'per_minute' => (int) env('LOOKOUT_MCP_PER_MINUTE', 600),
         'rate_limiter' => 'lookout-mcp',
+        'middleware' => null,
+        'tokens_connection' => env('LOOKOUT_MCP_TOKENS_CONNECTION'),
+        'user_id_type' => null,
         'tokens_table' => 'lookout_mcp_tokens',
         'token_prefix' => 'lookout_',
         'server_name' => null, // null = "<app.name> Lookout (admin)"

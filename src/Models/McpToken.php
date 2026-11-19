@@ -41,9 +41,34 @@ class McpToken extends Model
         ];
     }
 
+    /**
+     * lookout.mcp.tokens_connection, or the default connection.
+     */
+    public function getConnectionName(): ?string
+    {
+        $connection = config('lookout.mcp.tokens_connection');
+
+        return is_string($connection) && $connection !== '' ? $connection : parent::getConnectionName();
+    }
+
     public function getTable(): string
     {
         return (string) (config('lookout.mcp.tokens_table') ?: 'lookout_mcp_tokens');
+    }
+
+    /**
+     * A related model without its own connection stays on the default one: Eloquent would otherwise put the user on
+     * lookout.mcp.tokens_connection with the token.
+     *
+     * @param  class-string<Model>  $class
+     */
+    protected function newRelatedInstance($class): Model
+    {
+        return tap(new $class, function (Model $instance): void {
+            if (! $instance->getConnectionName()) {
+                $instance->setConnection((string) config('database.default'));
+            }
+        });
     }
 
     public function user(): BelongsTo

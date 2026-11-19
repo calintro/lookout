@@ -272,7 +272,9 @@ With `laravel/mcp` installed, Lookout serves an MCP server at `/mcp/lookout`. It
 - A token is read-only unless its owner allows "can resolve".
 - `LOOKOUT_MCP_TOKEN` with `LOOKOUT_MCP_USER_ID` is a shared token for automation. It acts as that user and may resolve.
 - Other credentials of your app (API keys, OAuth tokens) are refused.
-- Requests are limited per credential (`mcp.per_minute`, 600 by default).
+- Requests are limited per credential (`mcp.per_minute`, 600 by default). To use your app's own limiter instead, set `mcp.middleware` to the middleware that should run after the token check, e.g. `['rate:mcp']`; `[]` drops the limit.
+
+**Tokens table.** `lookout_mcp_tokens` is created on the default connection with a foreign key to the users table. Its `user_id` follows `users.id`: read when the migration runs, or set `mcp.user_id_type` to `int` or `bigint` (an `INT UNSIGNED` `users.id` on MySQL needs `int`, which the migration finds by itself). Set `mcp.tokens_connection` to keep the table elsewhere; on another connection than the users table it gets an index on `user_id` but no foreign key.
 
 | Key | Default |
 |-----|---------|
@@ -281,7 +283,9 @@ With `laravel/mcp` installed, Lookout serves an MCP server at `/mcp/lookout`. It
 | `mcp.gate` | `null` (the app's gate) |
 | `mcp.token`, `mcp.user_id` | `LOOKOUT_MCP_TOKEN`, `LOOKOUT_MCP_USER_ID` |
 | `mcp.per_minute`, `mcp.rate_limiter` | `600`, `lookout-mcp` |
+| `mcp.middleware` | `null` (`ThrottleRequests` with `mcp.rate_limiter`) |
 | `mcp.tokens_table`, `mcp.token_prefix` | `lookout_mcp_tokens`, `lookout_` (12 characters at most) |
+| `mcp.tokens_connection`, `mcp.user_id_type` | `LOOKOUT_MCP_TOKENS_CONNECTION` (the default connection), `null` (read from `users.id`) |
 | `mcp.server_name`, `mcp.client_name`, `mcp.app_name` | derived from `app.name` |
 
 ## Development
