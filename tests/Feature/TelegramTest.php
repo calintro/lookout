@@ -2,14 +2,12 @@
 
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Scheduling\Schedule;
-use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use Lookout\Console\TelegramNotifyCommand;
 use Lookout\Contracts\SettingStore;
 use Lookout\Services\TelegramChannels;
@@ -18,55 +16,11 @@ use Lookout\Services\TelegramProgress;
 const TG_TOKEN = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw';
 
 /**
- * The NightOwl tables Telegram alerts touch, on the test connection, with the columns the agent's migrations give them.
+ * The NightOwl tables Telegram alerts touch, on the test connection (nightowlTables() in tests/Pest.php).
  */
 function telegramTables(): void
 {
-    config(['lookout.connection' => 'testing', 'cache.default' => 'array', 'app.env' => 'production', 'nightowl.environment' => null]);
-    $schema = Schema::connection('testing');
-    $schema->create('nightowl_settings', function (Blueprint $t): void {
-        $t->id();
-        $t->string('key')->unique();
-        $t->text('value')->nullable();
-        $t->timestamps();
-    });
-    $schema->create('nightowl_alert_channels', function (Blueprint $t): void {
-        $t->id();
-        $t->string('name');
-        $t->string('type');
-        $t->text('config');
-        $t->boolean('enabled')->default(true);
-        $t->timestamps();
-    });
-    $schema->create('nightowl_issues', function (Blueprint $t): void {
-        $t->id();
-        $t->string('type');
-        $t->string('subtype')->nullable();
-        $t->string('environment')->nullable();
-        $t->string('status')->default('open');
-        $t->string('exception_class')->nullable();
-        $t->text('exception_message')->nullable();
-        $t->string('group_hash')->nullable();
-        $t->timestamp('first_seen_at')->nullable();
-        $t->timestamp('last_seen_at')->nullable();
-        $t->unsignedInteger('occurrences_count')->default(0);
-        $t->unsignedInteger('users_count')->default(0);
-        $t->unsignedInteger('threshold_ms')->nullable();
-        $t->unsignedInteger('triggered_duration_ms')->nullable();
-        $t->timestamps();
-    });
-    $schema->create('nightowl_issue_activity', function (Blueprint $t): void {
-        $t->id();
-        $t->unsignedBigInteger('issue_id');
-        $t->string('user_id')->nullable();
-        $t->string('user_name')->nullable();
-        $t->string('actor_type', 20)->default('user');
-        $t->json('actor_meta')->nullable();
-        $t->string('action', 50);
-        $t->string('old_value')->nullable();
-        $t->string('new_value')->nullable();
-        $t->timestamp('created_at')->nullable();
-    });
+    nightowlTables();
 }
 
 function tgChannel(array $overrides = []): array

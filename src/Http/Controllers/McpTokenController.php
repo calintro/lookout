@@ -49,26 +49,26 @@ class McpTokenController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        $validated = $request->validate(['name' => ['required', 'string', 'min:1', 'max:100'], 'can_resolve' => ['sometimes', 'boolean']]);
+        $validated = $request->validate(['name' => ['required', 'string', 'min:1', 'max:100'], 'can_write' => ['sometimes', 'boolean'], 'can_resolve' => ['sometimes', 'boolean']]);
         $active = McpToken::query()->where('user_id', $request->user()->id)->whereNull('revoked_at')->count();
 
         if ($active >= self::MAX_ACTIVE) {
             return response()->json(['message' => 'Revoke an old token first: at most '.self::MAX_ACTIVE.' active tokens.', 'errors' => ['name' => ['Too many active tokens.']]], 422);
         }
 
-        ['token' => $token, 'plain_token' => $plain] = McpToken::issue($request->user(), trim($validated['name']), (bool) ($validated['can_resolve'] ?? false));
+        ['token' => $token, 'plain_token' => $plain] = McpToken::issue($request->user(), trim($validated['name']), (bool) ($validated['can_write'] ?? $validated['can_resolve'] ?? false));
 
         return response()->json(['token' => self::present($token->fresh()), 'plain_token' => $plain], 201);
     }
 
     /**
-     * Turns the write right (resolve_issue) of one of your own tokens on or off.
+     * Turns write access of one of your own tokens on or off. can_resolve is the field's name before 0.3.0.
      */
     public function update(Request $request, int $token): JsonResponse
     {
-        $validated = $request->validate(['can_resolve' => ['required', 'boolean']]);
+        $validated = $request->validate(['can_write' => ['required_without:can_resolve', 'boolean'], 'can_resolve' => ['required_without:can_write', 'boolean']]);
         $model = McpToken::query()->where('user_id', $request->user()->id)->whereNull('revoked_at')->findOrFail($token);
-        $model->forceFill(['can_resolve' => (bool) $validated['can_resolve']])->save();
+        $model->forceFill(['can_resolve' => (bool) ($validated['can_write'] ?? $validated['can_resolve'])])->save();
 
         return response()->json(['token' => self::present($model->fresh())]);
     }
@@ -82,7 +82,9 @@ class McpTokenController extends Controller
     }
 
     /**
-     * @return array{id: int, name: string, prefix: string, can_resolve: bool, last_used_at: ?string, revoked_at: ?string, created_at: ?string}
+     * scope is "read" or "write"; can_resolve repeats can_write for clients written before 0.3.0.
+     *
+     * @return array{id: int, name: string, prefix: string, scope: string, can_write: bool, can_resolve: bool, last_used_at: ?string, revoked_at: ?string, created_at: ?string}
      */
     private static function present(McpToken $token): array
     {
@@ -90,7 +92,9 @@ class McpTokenController extends Controller
             'id' => $token->id,
             'name' => $token->name,
             'prefix' => $token->prefix,
-            'can_resolve' => (bool) $token->can_resolve,
+            'scope' => $token->canWrite() ? 'write' : 'read',
+            'can_write' => $token->canWrite(),
+            'can_resolve' => $token->canWrite(),
             'last_used_at' => $token->last_used_at?->toIso8601ZuluString(),
             'revoked_at' => $token->revoked_at?->toIso8601ZuluString(),
             'created_at' => $token->created_at?->toIso8601ZuluString(),

@@ -11,11 +11,10 @@ use Lookout\Models\Issue;
 use Lookout\Services\IssueStatus;
 
 /**
- * The only write tool of the Lookout MCP server: marks an issue resolved (the agent reopens it if it recurs). Needs a
- * credential with mcp_can_resolve (AuthenticateMcpToken): the shared token, or a personal token with can_resolve.
+ * Marks an issue resolved (the agent reopens it if it recurs). A write tool: needs write access.
  */
 #[IsIdempotent]
-class ResolveIssueTool extends LookoutTool
+class ResolveIssueTool extends WriteTool
 {
     protected string $name = 'resolve_issue';
 
@@ -32,14 +31,9 @@ class ResolveIssueTool extends LookoutTool
 
     public function handle(Request $request, IssueStatus $statuses): Response|ResponseFactory
     {
-        $admin = $this->admin($request);
-
-        if ($admin === null) {
-            return Response::error('Admins only.');
-        }
-
-        if (request()->attributes->get('mcp_can_resolve') !== true) {
-            return Response::error('This monitoring token is read-only. Allow "can resolve" on it in Lookout settings.');
+        $admin = $this->writer($request);
+        if ($admin instanceof Response) {
+            return $admin;
         }
 
         $request->validate(['id' => ['required', 'integer']]);

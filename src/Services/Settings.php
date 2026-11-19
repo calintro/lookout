@@ -3,7 +3,10 @@
 namespace Lookout\Services;
 
 use Illuminate\Database\ConnectionInterface;
+use Closure;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Lookout\Contracts\SettingStore;
 use Lookout\Lookout;
 
@@ -32,6 +35,59 @@ class Settings
     public const AUTO_RESOLVE_KEY = 'monitoring.auto_resolve_days';
 
     public const AUTO_RESOLVE_DAYS = [7, 14, 30];
+
+    /** Most thresholds in the list. */
+    public const MAX_THRESHOLDS = 200;
+
+    /**
+     * Validation of one threshold; $prefix is "thresholds.*." for a whole list. Shared by the web API and MCP.
+     *
+     * @return array<string, mixed>
+     */
+    public static function thresholdRules(string $prefix = ''): array
+    {
+        return [
+            "{$prefix}type" => ['required', Rule::in(self::THRESHOLD_TYPES)],
+            "{$prefix}target" => ['nullable', 'string', 'max:500'],
+            "{$prefix}duration_ms" => ['required', 'integer', 'min:1', 'max:3600000'],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public static function autoResolveRules(): array
+    {
+        return ['days' => ['present', 'nullable', 'integer', Rule::in(self::AUTO_RESOLVE_DAYS)]];
+    }
+
+    /**
+     * Validation of an agent channel (webhook, Slack, Discord) in the shape {name, enabled, config: {url|webhook_url,
+     * secret, notify_events}}; on update every key is optional. Shared by the web API and MCP. The type itself is
+     * checked by the caller on create.
+     *
+     * @return array<string, mixed>
+     */
+    public static function channelRules(mixed $type, bool $creating): array
+    {
+        $urlKey = self::urlKey((string) $type);
+        $required = $creating ? 'required' : 'sometimes';
+        $allowedUrl = function (string $attribute, mixed $value, Closure $fail) use ($type): void {
+            if (is_string($value) && ($problem = self::channelUrlProblem((string) $type, $value)) !== null) {
+                $fail($problem);
+            }
+        };
+
+        return [
+            'name' => [$required, 'string', 'max:100'],
+            'enabled' => ['sometimes', 'boolean'],
+            'config' => [$required, 'array'],
+            "config.{$urlKey}" => [$creating ? 'required' : 'sometimes', 'url:https', 'max:2000', $allowedUrl],
+            'config.secret' => ['sometimes', 'nullable', 'string', 'max:200'],
+            'config.notify_events' => ['sometimes', 'nullable', 'array'],
+            'config.notify_events.*' => [Rule::in(self::EVENTS)],
+        ];
+    }
 
     public function db(): ConnectionInterface
     {
@@ -85,6 +141,66 @@ class Settings
             [['key' => 'thresholds', 'value' => json_encode(array_values($thresholds)), 'created_at' => $now, 'updated_at' => $now]],
             ['key'], ['value', 'updated_at'],
         );
+    }
+
+    /**
+     * Sets the threshold of one type and target (null = the type's global rule), replacing the one there was.
+     *
+     * @return array{threshold: array{type: string, target: ?string, duration_ms: int}, replaced: bool}
+     */
+    public function putThreshold(string $type, ?string $target, int $durationMs): array
+    {
+        $threshold = ['type' => $type, 'target' => self::thresholdTarget($type, $target), 'duration_ms' => $durationMs];
+        $list = $this->thresholds();
+        $at = self::thresholdIndex($list, $type, $threshold['target']);
+        if ($at === null && count($list) >= self::MAX_THRESHOLDS) {
+            throw ValidationException::withMessages(['type' => 'At most '.self::MAX_THRESHOLDS.' thresholds: delete one first.']);
+        }
+        if ($at === null) {
+            $list[] = $threshold;
+        } else {
+            $list[$at] = $threshold;
+        }
+        $this->saveThresholds($list);
+
+        return ['threshold' => $threshold, 'replaced' => $at !== null];
+    }
+
+    /**
+     * Removes the threshold of one type and target. Returns false when there was none.
+     */
+    public function deleteThreshold(string $type, ?string $target): bool
+    {
+        $list = $this->thresholds();
+        $at = self::thresholdIndex($list, $type, self::thresholdTarget($type, $target));
+        if ($at === null) {
+            return false;
+        }
+        unset($list[$at]);
+        $this->saveThresholds(array_values($list));
+
+        return true;
+    }
+
+    /**
+     * @param  list<array{type: string, target: ?string, duration_ms: int}>  $list
+     */
+    private static function thresholdIndex(array $list, string $type, ?string $target): ?int
+    {
+        foreach ($list as $i => $t) {
+            if ($t['type'] === $type && self::thresholdTarget($type, $t['target']) === $target) {
+                return $i;
+            }
+        }
+
+        return null;
+    }
+
+    private static function thresholdTarget(string $type, ?string $target): ?string
+    {
+        $target = $target !== null && trim($target) !== '' ? trim($target) : null;
+
+        return $type === 'route' ? self::routeTarget($target) : $target;
     }
 
     /**

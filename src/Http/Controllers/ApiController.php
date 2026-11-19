@@ -118,7 +118,7 @@ class ApiController extends Controller
 
     public function comment(Request $request, int $issue, IssueEditor $editor): JsonResponse
     {
-        $validated = $request->validate(['body' => ['required', 'string', 'max:10000']]);
+        $validated = $request->validate(IssueEditor::commentRules());
         $comment = $editor->comment(Issue::query()->findOrFail($issue), $request->user(), trim($validated['body']));
 
         return response()->json(['comment' => Issues::comment($comment)], 201);

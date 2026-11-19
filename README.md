@@ -105,7 +105,7 @@ The screenshots come from a demo shop with generated traffic. No real users or d
 - **No event quota.** What you keep is limited by your disk and the NightOwl retention settings, not by a plan.
 - **Same instrumentation as Nightwatch.** NightOwl builds on `laravel/nightwatch`, so you get the same request, job, query and exception data.
 - **Issues, not only charts.** Errors and slow executions become issues with an owner, a priority and a history.
-- **Agent access on your terms.** The MCP server runs in your app, behind your gate, with personal tokens that are read-only unless you allow resolving.
+- **Agent access on your terms.** The MCP server runs in your app, behind your gate, with personal tokens that are read-only unless you give them write access.
 - **Small footprint.** One Composer package, one extra table, no Node, no extra service besides the agent NightOwl already needs.
 
 ## How it compares
@@ -284,7 +284,9 @@ The bot token is stored in the setting store, as webhook secrets are stored in `
 
 ## MCP server
 
-With `laravel/mcp` installed, Lookout serves an MCP server at `/mcp/lookout`. It has these tools:
+With `laravel/mcp` installed, Lookout serves an MCP server at `/mcp/lookout`. Every credential can read. Changing anything needs write access, which is off by default.
+
+**Read tools** (every credential):
 
 | Tool | What it does |
 |------|--------------|
@@ -293,18 +295,39 @@ With `laravel/mcp` installed, Lookout serves an MCP server at `/mcp/lookout`. It
 | `slow_routes` | Routes by p95, average, calls or error rate over a window. |
 | `slow_queries` | Queries by p95, total time, average or calls. |
 | `failed_jobs` | Jobs with failures over a window. |
-| `resolve_issue` | Marks an issue resolved. This is the only tool that writes. |
+| `get_settings` | Thresholds, alert channels and auto-resolve, as the Settings page shows them: URLs cut to the host, secrets and bot tokens never returned. |
+
+**Write tools** (only credentials with write access):
+
+| Tool | What it does |
+|------|--------------|
+| `resolve_issue` | Marks an issue resolved. |
+| `update_issue` | Sets an issue's status (`open`, `resolved`, `ignored`), priority (`low`, `medium`, `high` or none) and assignee (a user id or none). |
+| `comment_issue` | Adds a markdown comment to an issue. |
+| `set_threshold`, `delete_threshold` | Sets or removes the performance threshold of one type and target. |
+| `set_auto_resolve` | Sets auto-resolve to 7, 14 or 30 days, or off. |
+| `create_alert_channel`, `update_alert_channel`, `delete_alert_channel` | Manages webhook, Slack, Discord and Telegram channels. |
+
+**Scopes.** A credential has the `read` scope or the `write` scope.
+
+- A read-only credential does not see the write tools in `tools/list`. Calling one anyway returns a JSON-RPC error that says the tool needs write access.
+- Write tools apply the same rules as the Settings page and the issue API: the same URL checks for Slack, Discord and webhooks, the same bot token and chat ID formats, the same assignee check. A refused value comes back as a tool error with the validation message.
+- Issue changes are written to the issue's activity as the token's user, with an MCP badge (`actor_meta.via = mcp`). MCP comments are stored with `actor_type = mcp`.
+- Settings changes are logged at `info` level (`Lookout MCP: …`) with the user and what changed. Logs name the changed fields, never URLs, secrets or bot tokens.
+- Secrets are write-only. URLs, signing secrets and bot tokens can be set through MCP, but no MCP response returns them.
 
 **Access.** Each user creates personal tokens on the MCP page in Lookout. The page also shows ready-to-paste snippets for Claude Code, Codex, Cursor and VS Code.
 
 - A token acts as its owner while the owner passes `mcp.gate`. `null` means the app's gate (`gate`, i.e. `viewLookout` by default); there is no separate MCP ability unless you set one.
-- A token is read-only unless its owner allows "can resolve". The only write it allows is resolving an issue (`resolve_issue`).
-- `LOOKOUT_MCP_TOKEN` with `LOOKOUT_MCP_USER_ID` is a shared token for automation. It acts as that user and may resolve. Use a long random value (32+ characters, e.g. `php -r "echo bin2hex(random_bytes(32));"`); a shorter one still works but logs a warning once a day.
+- A personal token is read-only unless its owner turns on **Write access**, when creating it or later on the MCP page. The token API takes `can_write`. The old field name `can_resolve` is still accepted, and the response carries `scope` (`read` or `write`), `can_write` and `can_resolve`. The flag stays in the `can_resolve` column, so updating needs no migration.
+- `LOOKOUT_MCP_TOKEN` with `LOOKOUT_MCP_USER_ID` is a shared token for automation. It acts as that user and is read-only unless `LOOKOUT_MCP_TOKEN_CAN_WRITE=true`. Use a long random value (32+ characters, e.g. `php -r "echo bin2hex(random_bytes(32));"`); a shorter one still works but logs a warning once a day.
 - Tokens are sent as `Authorization: Bearer <token>` or `X-Api-Token: <token>`.
 - Other credentials of your app (API keys, OAuth tokens) are refused.
 - The server answers 404 while Lookout is disabled, like the web app.
 - Failed token checks are limited per IP before any token lookup (`mcp.failed_per_minute`, 30 by default): above that the IP gets 429 with `Retry-After` for the rest of the minute. Successful requests are not counted.
 - Requests are limited per credential (`mcp.per_minute`, 600 by default). To use your app's own limiter instead, set `mcp.middleware` to the middleware that should run after the token check, e.g. `['rate:mcp']`; `[]` drops the limit.
+
+**Upgrading from 0.2.** Before 0.3.0 the shared token could always resolve issues. It is now read-only by default: set `LOOKOUT_MCP_TOKEN_CAN_WRITE=true` if your automation resolves issues through it. Personal tokens keep their setting: a token that could resolve now has write access, so it can also use the new write tools. Turn write access off on the MCP page for tokens that should only resolve.
 
 **Tokens table.** `lookout_mcp_tokens` is created on the default connection with a foreign key to the users table. Its `user_id` follows `users.id`: read when the migration runs, or set `mcp.user_id_type` to `int` or `bigint` (an `INT UNSIGNED` `users.id` on MySQL needs `int`, which the migration finds by itself). Set `mcp.tokens_connection` to keep the table elsewhere; on another connection than the users table it gets an index on `user_id` but no foreign key.
 
@@ -314,6 +337,7 @@ With `laravel/mcp` installed, Lookout serves an MCP server at `/mcp/lookout`. It
 | `mcp.path` | `mcp/lookout` |
 | `mcp.gate` | `null` (the app's gate) |
 | `mcp.token`, `mcp.user_id` | `LOOKOUT_MCP_TOKEN`, `LOOKOUT_MCP_USER_ID` |
+| `mcp.token_can_write` | `LOOKOUT_MCP_TOKEN_CAN_WRITE`, `false`: whether the shared token may use the write tools |
 | `mcp.per_minute`, `mcp.rate_limiter` | `600`, `lookout-mcp` |
 | `mcp.failed_per_minute` | `LOOKOUT_MCP_FAILED_PER_MINUTE`, `30` |
 | `mcp.middleware` | `null` (`ThrottleRequests` with `mcp.rate_limiter`) |
@@ -328,7 +352,7 @@ With `laravel/mcp` installed, Lookout serves an MCP server at `/mcp/lookout`. It
 - If you turn `ignore_own_routes` off, add `plain_token,url,webhook_url,secret,bot_token` to `NIGHTOWL_REDACT_RESPONSE_FIELDS` and `NIGHTWATCH_REDACT_PAYLOAD_FIELDS`, and `X-Api-Token` to `NIGHTWATCH_REDACT_HEADERS`.
 - If the app also reports to the Laravel Nightwatch service (`NIGHTOWL_PARALLEL_WITH_NIGHTWATCH=true`), Lookout's routes are not excluded there: add `X-Api-Token` to `NIGHTWATCH_REDACT_HEADERS` (its default list redacts `Authorization` but not `X-Api-Token`), or send MCP tokens as `Authorization: Bearer`.
 
-**One access level.** Everyone who passes `viewLookout` can also change settings: thresholds, auto-resolve, alert channels (including their URLs), bulk status changes, and the "can resolve" right of their own MCP tokens. Grant the gate only to people you trust with alerting, not for read-only triage.
+**One access level.** Everyone who passes `viewLookout` can also change settings: thresholds, auto-resolve, alert channels (including their URLs), bulk status changes, and write access of their own MCP tokens. A token with write access can change the same settings through MCP. Grant the gate only to people you trust with alerting, not for read-only triage.
 
 **Alert channel URLs.** Slack channels must point at `https://hooks.slack.com/`, Discord channels at `https://discord.com/api/webhooks/` or `https://discordapp.com/api/webhooks/`. Generic webhooks may not point at `localhost` or a literal private, loopback, link-local or reserved IP. Host names are not resolved, so a public name that resolves to an internal address still passes: restrict the agent's outbound traffic where that matters. Changing a webhook's URL drops its stored signing secret unless you send a new one.
 

@@ -23,7 +23,7 @@ it('opens for a personal token of a user the gate lets in, with the configured p
 
     $names = collect(packageMcpList(['Authorization' => "Bearer {$plain}"])->assertOk()->json('result.tools'))->pluck('name')->sort()->values()->all();
 
-    expect($names)->toBe(['failed_jobs', 'get_issue', 'list_issues', 'resolve_issue', 'slow_queries', 'slow_routes'])
+    expect($names)->toBe(['failed_jobs', 'get_issue', 'get_settings', 'list_issues', 'slow_queries', 'slow_routes'])
         ->and($plain)->toStartWith('xyz_')
         ->and($token->fresh()->prefix)->toBe(substr($plain, 0, 8))
         ->and($token->fresh()->last_used_at)->not->toBeNull();

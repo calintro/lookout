@@ -2,6 +2,7 @@
 
 namespace Lookout\Services;
 
+use Illuminate\Validation\Rule;
 use Lookout\Contracts\SettingStore;
 
 /**
@@ -20,6 +21,26 @@ class TelegramChannels
 
     /** A numeric chat id (negative for groups and channels) or a public @username. */
     public const CHAT_PATTERN = '/^(-?\d+|@[A-Za-z0-9_]{5,})$/';
+
+    /**
+     * Validation of a channel, shared by the web API and MCP. An empty bot_token on update keeps the stored one.
+     *
+     * @return array<string, mixed>
+     */
+    public static function rules(bool $creating): array
+    {
+        $required = $creating ? 'required' : 'sometimes';
+
+        return [
+            'name' => [$required, 'string', 'max:100'],
+            'bot_token' => $creating ? ['required', 'string', 'max:200', 'regex:'.self::TOKEN_PATTERN] : ['sometimes', 'nullable', 'string', 'max:200', 'regex:'.self::TOKEN_PATTERN],
+            'chat_id' => [$required, 'string', 'max:100', 'regex:'.self::CHAT_PATTERN],
+            'message_thread_id' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'enabled' => ['sometimes', 'boolean'],
+            'notify_events' => ['sometimes', 'nullable', 'array'],
+            'notify_events.*' => [Rule::in(Settings::EVENTS)],
+        ];
+    }
 
     public function __construct(private SettingStore $store, private TelegramProgress $progress) {}
 

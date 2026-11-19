@@ -26,7 +26,23 @@ class IssueUpdateRequest extends FormRequest
      */
     public function rules(): array
     {
-        $rules = [
+        $rules = self::fieldRules();
+
+        if ($this->routeIs('lookout.issues.bulk')) {
+            return [...$rules, 'ids' => ['required', 'array', 'min:1', 'max:'.self::MAX_BULK], 'ids.*' => ['integer', 'distinct']];
+        }
+
+        return [...$rules, 'description' => ['sometimes', 'nullable', 'string', 'max:20000']];
+    }
+
+    /**
+     * Status, priority and assignee, shared by the web API and MCP (update_issue).
+     *
+     * @return array<string, mixed>
+     */
+    public static function fieldRules(): array
+    {
+        return [
             'status' => ['sometimes', 'in:'.implode(',', Issue::STATUSES)],
             'priority' => ['sometimes', 'nullable', 'in:'.implode(',', Issue::PRIORITIES)],
             'assigned_to' => ['sometimes', 'nullable', 'integer', function (string $attribute, mixed $value, Closure $fail): void {
@@ -35,12 +51,6 @@ class IssueUpdateRequest extends FormRequest
                 }
             }],
         ];
-
-        if ($this->routeIs('lookout.issues.bulk')) {
-            return [...$rules, 'ids' => ['required', 'array', 'min:1', 'max:'.self::MAX_BULK], 'ids.*' => ['integer', 'distinct']];
-        }
-
-        return [...$rules, 'description' => ['sometimes', 'nullable', 'string', 'max:20000']];
     }
 
     /**

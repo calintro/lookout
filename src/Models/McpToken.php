@@ -12,7 +12,8 @@ use Lookout\Lookout;
 /**
  * A personal token of the Lookout MCP server (lookout.mcp.path). Only its sha256 is stored; the plain token is
  * shown once on creation. It opens the server only while it is not revoked and its owner passes the MCP gate.
- * Write tools (resolve_issue) also need can_resolve, which is off by default.
+ * Write tools also need write access, which is off by default. It is stored in the can_resolve column (its name
+ * from before 0.3.0, when resolving was the only write) and shown as can_write.
  *
  * @property int $id
  * @property int $user_id
@@ -79,7 +80,7 @@ class McpToken extends Model
     /**
      * @return array{token: self, plain_token: string}
      */
-    public static function issue(Authenticatable $user, string $name, bool $canResolve = false): array
+    public static function issue(Authenticatable $user, string $name, bool $canWrite = false): array
     {
         $prefix = self::prefix();
         $plain = $prefix.Str::random(48);
@@ -89,10 +90,18 @@ class McpToken extends Model
             'name' => $name,
             'token_hash' => hash('sha256', $plain),
             'prefix' => substr($plain, 0, strlen($prefix) + 4),
-            'can_resolve' => $canResolve,
+            'can_resolve' => $canWrite,
         ]);
 
         return ['token' => $token, 'plain_token' => $plain];
+    }
+
+    /**
+     * Whether the token may use the write tools (column can_resolve).
+     */
+    public function canWrite(): bool
+    {
+        return (bool) $this->can_resolve;
     }
 
     /**

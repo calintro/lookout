@@ -109,10 +109,10 @@ const A = {
   tokCancel() { VS.tokForm = false; render(true); },
   async createTok() {
     const name = $('#tk-name').value.trim(); if (!name) { toast('Give the token a name', true); $('#tk-name').focus(); return; }
-    try { const r = await post('/mcp/tokens', { name, can_resolve: $('#tk-resolve').checked }); NEWTOKEN = r.plain_token; VS.tokForm = false; render(true); } catch (e) { fail(e); }
+    try { const r = await post('/mcp/tokens', { name, can_write: $('#tk-write').checked }); NEWTOKEN = r.plain_token; VS.tokForm = false; render(true); } catch (e) { fail(e); }
   },
   hideTok() { NEWTOKEN = null; render(true); },
-  async tokResolve(arg) { const [id, on] = arg.split('|'); try { await patch('/mcp/tokens/' + id, { can_resolve: on === '1' }); toast(on === '1' ? 'The token can resolve issues' : 'The token is read only'); render(true); } catch (e) { fail(e); } },
+  async tokWrite(arg) { const [id, on] = arg.split('|'); try { await patch('/mcp/tokens/' + id, { can_write: on === '1' }); toast(on === '1' ? 'The token can read and write' : 'The token is read only'); render(true); } catch (e) { fail(e); } },
   revokeAsk(id) { VS.confirmRevoke = +id; render(true); },
   async revoke(id) { try { const r = await del('/mcp/tokens/' + id); VS.confirmRevoke = null; toast(`Revoked “${r.token.name}”`); render(true); } catch (e) { fail(e); } },
   toggleRevoked() { VS.showRevoked = !VS.showRevoked; render(true); },

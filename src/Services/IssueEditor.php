@@ -17,6 +17,16 @@ class IssueEditor
 {
     public const ACTIONS = ['priority' => 'priority_changed', 'assigned_to' => 'assigned', 'description' => 'description_changed'];
 
+    /**
+     * A comment's body, shared by the web API and MCP (comment_issue).
+     *
+     * @return array<string, mixed>
+     */
+    public static function commentRules(): array
+    {
+        return ['body' => ['required', 'string', 'max:10000']];
+    }
+
     public function __construct(private IssueStatus $status) {}
 
     /**
@@ -77,7 +87,8 @@ class IssueEditor
                 'user_name' => $actor->name,
                 'user_email' => $actor->email,
                 'body' => $body,
-                'actor_type' => 'user',
+                // The SPA marks comments written through MCP by this actor type; activity rows carry it in actor_meta.via.
+                'actor_type' => $via === 'mcp' ? 'mcp' : 'user',
                 'actor_meta' => json_encode(['via' => $via]),
                 'created_at' => $now,
                 'updated_at' => $now,

@@ -16,8 +16,9 @@ use Symfony\Component\HttpFoundation\Response;
  * Gate of the Lookout MCP server. Two credentials open it: a personal token a user created in Lookout
  * (lookout.mcp.tokens_table; acts as its owner while the owner still passes the MCP gate), or the shared
  * lookout.mcp.token, which acts as the user lookout.mcp.user_id. Other credentials of the app (API keys, OAuth
- * tokens) never do. The request attribute mcp_can_resolve tells write tools whether the credential may change
- * issues: a personal token only with can_resolve, the shared token always.
+ * tokens) never do. The request attribute mcp_can_write tells the server whether the credential may change
+ * monitoring (the write tools): a personal token only with write access (its can_resolve column), the shared token
+ * only with lookout.mcp.token_can_write. mcp_can_resolve is the same flag under its name before 0.3.0.
  *
  * Closed (404) while Lookout is disabled. Failed attempts are counted per IP before any token lookup: above
  * lookout.mcp.failed_per_minute the IP gets 429 until the minute is over; successful requests are not counted.
@@ -52,7 +53,7 @@ class AuthenticateMcpToken
 
             $personal->touchLastUsed();
 
-            return $this->actAs($request, $next, $personal->user, 'personal_monitoring_token', $personal->can_resolve);
+            return $this->actAs($request, $next, $personal->user, 'personal_monitoring_token', $personal->canWrite());
         }
 
         $expected = (string) config('lookout.mcp.token');
@@ -74,7 +75,7 @@ class AuthenticateMcpToken
             return response()->json(['error' => 'forbidden', 'message' => 'The monitoring MCP user (lookout.mcp.user_id) must be an admin.'], 403);
         }
 
-        return $this->actAs($request, $next, $user, 'monitoring_token', true);
+        return $this->actAs($request, $next, $user, 'monitoring_token', (bool) config('lookout.mcp.token_can_write', false));
     }
 
     private static function warnAboutShortSharedToken(string $token): void
@@ -89,11 +90,12 @@ class AuthenticateMcpToken
     /**
      * @param  Closure(Request): (Response)  $next
      */
-    private function actAs(Request $request, Closure $next, Authenticatable $user, string $via, bool $canResolve): Response
+    private function actAs(Request $request, Closure $next, Authenticatable $user, string $via, bool $canWrite): Response
     {
         $request->setUserResolver(fn () => $user);
         $request->attributes->set('mcp_auth', $via);
-        $request->attributes->set('mcp_can_resolve', $canResolve);
+        $request->attributes->set('mcp_can_write', $canWrite);
+        $request->attributes->set('mcp_can_resolve', $canWrite);
 
         return $next($request);
     }

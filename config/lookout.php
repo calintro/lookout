@@ -39,7 +39,8 @@ return [
     | The read connection of the NightOwl database. When it is not defined in config/database.php, Lookout defines it
     | from nightowl.database. Needs SELECT, plus UPDATE on nightowl_issues, INSERT on nightowl_issue_activity and
     | nightowl_issue_comments, and writes on nightowl_settings / nightowl_alert_channels for the Settings page (and
-    | for lookout:telegram-notify, which keeps its watermark in nightowl_settings with the default SettingStore).
+    | for lookout:telegram-notify, which keeps its watermarks in nightowl_settings with the default SettingStore).
+    | MCP write tools use the same writes.
     */
     'connection' => env('LOOKOUT_DB_CONNECTION', 'nightowl_read'),
 
@@ -89,6 +90,8 @@ return [
     /*
     | The MCP server for coding agents (needs laravel/mcp). Opened by a personal token a user creates in Lookout
     | (token_prefix: at most 12 characters; stored in tokens_table) or by the shared token, which acts as user_id.
+    | Credentials read only. A personal token writes (issues, thresholds, alert channels, auto-resolve) when its owner
+    | turns on "Write access"; the shared token only with token_can_write (LOOKOUT_MCP_TOKEN_CAN_WRITE, off).
     | 'gate' is the ability a token's user must pass (null = the app's gate). per_minute is the limit per
     | credential, under rate_limiter. failed_per_minute: failed token checks per IP before it gets 429 for the rest of
     | the minute. The shared token should be a long random value (32+ characters; shorter ones log a warning).
@@ -104,6 +107,7 @@ return [
         'gate' => null,
         'token' => env('LOOKOUT_MCP_TOKEN'),
         'user_id' => env('LOOKOUT_MCP_USER_ID'),
+        'token_can_write' => (bool) env('LOOKOUT_MCP_TOKEN_CAN_WRITE', false),
         'per_minute' => (int) env('LOOKOUT_MCP_PER_MINUTE', 600),
         'failed_per_minute' => (int) env('LOOKOUT_MCP_FAILED_PER_MINUTE', 30),
         'rate_limiter' => 'lookout-mcp',

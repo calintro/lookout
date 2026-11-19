@@ -4,6 +4,32 @@ All notable changes to Lookout are documented here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-19
+
+### Breaking
+
+- The shared MCP token (`LOOKOUT_MCP_TOKEN`) is read-only by default. Before, it could always resolve issues. Set `LOOKOUT_MCP_TOKEN_CAN_WRITE=true` (`mcp.token_can_write`) if your automation writes through it.
+- Personal tokens that could resolve issues now have write access, which also covers the new write tools below. Turn write access off on the MCP page for tokens that should only read.
+- A read-only credential no longer sees `resolve_issue` in `tools/list`. Before, the tool was listed and refused when called.
+
+### Added
+
+- MCP scopes: `read` (the default) and `write`. Write tools are registered only for a credential with write access. A read-only credential does not see them, and calling one returns a JSON-RPC error that says write access is needed.
+- Write tools:
+  - `update_issue`: status, priority and assignee.
+  - `comment_issue`: adds a comment.
+  - `set_threshold` and `delete_threshold`.
+  - `set_auto_resolve`.
+  - `create_alert_channel`, `update_alert_channel` and `delete_alert_channel`, for webhook, Slack, Discord and Telegram channels.
+- How the write tools work:
+  - They validate with the same rules as the web API: URL checks, bot token and chat ID formats, the assignee check. The rules moved into `Settings::thresholdRules()`, `Settings::autoResolveRules()`, `Settings::channelRules()`, `TelegramChannels::rules()`, `IssueUpdateRequest::fieldRules()` and `IssueEditor::commentRules()`, which the controllers use too.
+  - Issue changes go to the issue's activity as the token's user, with `actor_meta.via = mcp`. Comments written through MCP have `actor_type = mcp`, so the SPA shows them with the MCP badge.
+  - Settings changes are logged at `info` level with the user and the changed fields, never URLs, secrets or bot tokens.
+- Read tool `get_settings`: thresholds, alert channels (secrets masked as in the web API) and auto-resolve.
+- Token API: `can_write` on create and update. The old `can_resolve` field is still accepted, and responses carry `scope`, `can_write` and `can_resolve`. Write access stays in the `can_resolve` column, so updating needs no migration.
+- MCP page: a **Write access** checkbox when creating a token, the scope per token ("Read" or "Read & write") with a toggle, and the read and write tools listed apart.
+- README: the MCP section is rewritten around scopes, and the config table has `mcp.token_can_write`.
+
 ## [0.2.1] - 2026-11-19
 
 ### Fixed
