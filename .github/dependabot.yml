@@ -1,0 +1,26 @@
+version: 2
+updates:
+  # Runtime and dev dependencies. A library: widen constraints so a new major (Laravel 14, NightOwl 3)
+  # becomes an extra supported range in a PR instead of a silent drop of the old one.
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    versioning-strategy: widen
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      dev-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, ci]
+    groups:
+      actions:
+        patterns: ['*']

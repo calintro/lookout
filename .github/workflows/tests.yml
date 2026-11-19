@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly run against the newest releases of Laravel, NightOwl and friends, so a breaking upstream release
+  # shows up here before a user reports it.
+  schedule:
+    - cron: '0 6 * * 1'
 
 permissions:
   contents: read
