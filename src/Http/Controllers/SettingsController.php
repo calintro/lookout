@@ -7,9 +7,12 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Validation\Rule;
 use Lookout\Services\Settings;
+use Lookout\Services\Telegram;
+use Lookout\Services\TelegramChannels;
 
 /**
- * Lookout settings: performance thresholds and alert channels (read by the NightOwl agent) and auto-resolve.
+ * Lookout settings: performance thresholds and alert channels (read by the NightOwl agent), Telegram channels (sent
+ * by Lookout itself) and auto-resolve.
  */
 class SettingsController extends Controller
 {
@@ -65,6 +68,59 @@ class SettingsController extends Controller
         abort_unless($this->settings->deleteChannel($channel), 404);
 
         return response()->json(['deleted' => true]);
+    }
+
+    public function storeTelegram(Request $request, TelegramChannels $channels): JsonResponse
+    {
+        return response()->json(['channel' => $channels->create($request->validate($this->telegramRules(true)))], 201);
+    }
+
+    public function updateTelegram(Request $request, TelegramChannels $channels, int $channel): JsonResponse
+    {
+        abort_if($channels->find($channel) === null, 404);
+
+        return response()->json(['channel' => $channels->update($channel, $request->validate($this->telegramRules(false)))]);
+    }
+
+    public function destroyTelegram(TelegramChannels $channels, int $channel): JsonResponse
+    {
+        abort_unless($channels->delete($channel), 404);
+
+        return response()->json(['deleted' => true]);
+    }
+
+    /**
+     * Sends a test message now, whatever the channel's events and enabled flag; 422 with Telegram's own error text.
+     */
+    public function testTelegram(TelegramChannels $channels, Telegram $telegram, int $channel): JsonResponse
+    {
+        $stored = $channels->find($channel);
+        abort_if($stored === null, 404);
+        $error = $telegram->send($stored, $telegram->testMessage());
+
+        return $error === null
+            ? response()->json(['sent' => true])
+            : response()->json(['sent' => false, 'message' => 'Telegram: '.$error], 422);
+    }
+
+    /**
+     * An empty bot_token on update keeps the stored one.
+     *
+     * @return array<string, mixed>
+     */
+    private function telegramRules(bool $creating): array
+    {
+        $required = $creating ? 'required' : 'sometimes';
+
+        return [
+            'name' => [$required, 'string', 'max:100'],
+            'bot_token' => $creating ? ['required', 'string', 'max:200', 'regex:'.TelegramChannels::TOKEN_PATTERN] : ['sometimes', 'nullable', 'string', 'max:200', 'regex:'.TelegramChannels::TOKEN_PATTERN],
+            'chat_id' => [$required, 'string', 'max:100', 'regex:'.TelegramChannels::CHAT_PATTERN],
+            'message_thread_id' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'enabled' => ['sometimes', 'boolean'],
+            'notify_events' => ['sometimes', 'nullable', 'array'],
+            'notify_events.*' => [Rule::in(Settings::EVENTS)],
+        ];
     }
 
     /**

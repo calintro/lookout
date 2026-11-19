@@ -46,6 +46,10 @@ Route::put('settings/auto-resolve', [SettingsController::class, 'autoResolve']);
 Route::post('settings/channels', [SettingsController::class, 'storeChannel']);
 Route::patch('settings/channels/{channel}', [SettingsController::class, 'updateChannel'])->whereNumber('channel');
 Route::delete('settings/channels/{channel}', [SettingsController::class, 'destroyChannel'])->whereNumber('channel');
+Route::post('settings/telegram', [SettingsController::class, 'storeTelegram']);
+Route::patch('settings/telegram/{channel}', [SettingsController::class, 'updateTelegram'])->whereNumber('channel');
+Route::delete('settings/telegram/{channel}', [SettingsController::class, 'destroyTelegram'])->whereNumber('channel');
+Route::post('settings/telegram/{channel}/test', [SettingsController::class, 'testTelegram'])->whereNumber('channel');
 
 Route::get('mcp/config', [McpTokenController::class, 'config']);
 Route::get('mcp/tokens', [McpTokenController::class, 'index']);

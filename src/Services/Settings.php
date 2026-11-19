@@ -15,6 +15,9 @@ use Lookout\Lookout;
  * - alert channels: nightowl_alert_channels (type webhook | slack | discord, JSON config). The agent's
  *   AlertNotifier sends issue.new / issue.reopened to every enabled channel; webhook config is {url, secret?}
  *   (HMAC-SHA256 in X-NightOwl-Signature), slack/discord {webhook_url}; notify_events limits the events.
+ * - telegram channels: the agent cannot send them (its AlertNotifier throws on unknown types), so they live in the
+ *   bound SettingStore (TelegramChannels) and lookout:telegram-notify (scheduled every minute) delivers them. The UI
+ *   gets them in alert_channels with type "telegram"; CHANNEL_TYPES stays the agent's own list.
  * - auto-resolve: the agent has none, so the days live under monitoring.auto_resolve_days in the bound SettingStore
  *   and lookout:auto-resolve (scheduled daily) applies them.
  */
@@ -43,8 +46,11 @@ class Settings
         return [
             'thresholds' => $this->thresholds(),
             'threshold_types' => self::THRESHOLD_TYPES,
-            'alert_channels' => $this->db()->table('nightowl_alert_channels')->orderBy('id')->get()->map(fn (object $c): array => self::channel($c))->all(),
-            'channel_types' => self::CHANNEL_TYPES,
+            'alert_channels' => [
+                ...$this->db()->table('nightowl_alert_channels')->orderBy('id')->get()->map(fn (object $c): array => self::channel($c))->all(),
+                ...app(TelegramChannels::class)->forUi(),
+            ],
+            'channel_types' => [...self::CHANNEL_TYPES, 'telegram'],
             'events' => self::EVENTS,
             'auto_resolve_days' => self::autoResolveDays(),
             'auto_resolve_options' => [null, ...self::AUTO_RESOLVE_DAYS],

@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Mcp\Facades\Mcp;
 use Lookout\Console\AutoResolveCommand;
+use Lookout\Console\TelegramNotifyCommand;
 use Lookout\Contracts\SettingStore;
 use Lookout\Http\Controllers\AssetController;
 use Lookout\Http\Controllers\PageController;
@@ -21,7 +22,7 @@ use Lookout\Support\NightowlSettingStore;
 
 /**
  * Lookout: the SPA shell at /{path}/{any?}, its JSON API at /{path}/api/*, the MCP server for coding
- * agents, the auto-resolve command and its schedule. See config/lookout.php.
+ * agents, the auto-resolve and Telegram commands and their schedule. See config/lookout.php.
  */
 class LookoutServiceProvider extends ServiceProvider
 {
@@ -57,7 +58,7 @@ class LookoutServiceProvider extends ServiceProvider
         $this->rateLimiter();
 
         if ($this->app->runningInConsole()) {
-            $this->commands([AutoResolveCommand::class]);
+            $this->commands([AutoResolveCommand::class, TelegramNotifyCommand::class]);
             $this->publishes([__DIR__.'/../config/lookout.php' => config_path('lookout.php')], 'lookout-config');
             $this->publishes([__DIR__.'/../database/migrations' => database_path('migrations')], 'lookout-migrations');
             $this->publishes([__DIR__.'/../dist' => public_path('vendor/lookout')], 'lookout-assets');
@@ -69,6 +70,13 @@ class LookoutServiceProvider extends ServiceProvider
                     ->dailyAt((string) config('lookout.auto_resolve.at', '03:40'))
                     ->when(fn (): bool => Lookout::enabled())
                     ->withoutOverlapping(30);
+            }
+            if (config('lookout.telegram.enabled', true)) {
+                $schedule->command('lookout:telegram-notify')
+                    ->everyMinute()
+                    ->when(fn (): bool => Lookout::enabled())
+                    ->withoutOverlapping(10)
+                    ->onOneServer();
             }
         });
 

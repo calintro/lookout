@@ -82,17 +82,27 @@ const A = {
   thrDel(i) { VS.thrRows.splice(+i, 1); render(true); },
   thrReset() { VS.thrRows = SETTINGS.thresholds.map(t => ({ ...t })); render(true); },
   async thrSave() { const bad = VS.thrRows.findIndex(t => !(t.duration_ms >= 1 && t.duration_ms <= 3600000)); if (bad >= 0) { toast('Thresholds are 1 to 3,600,000 ms; fix row ' + (bad + 1), true); return; } try { const r = await put('/settings/thresholds', { thresholds: VS.thrRows }); toast('Thresholds saved; the agent applies them within 30 s'); VS.reload = true; SETTINGS = null; render(true); return r; } catch (e) { fail(e); } },
-  chForm() { VS.chForm = true; render(true); }, chCancel() { VS.chForm = false; render(true); },
+  chForm(id) { VS.chForm = id ? { edit: +id } : true; VS.chType = null; render(true); }, chCancel() { VS.chForm = false; VS.chType = null; render(true); },
   async chCreate() {
-    const type = $('#ch-type').value, name = $('#ch-name').value.trim(), url = $('#ch-url').value.trim(), secret = $('#ch-secret') ? $('#ch-secret').value.trim() : '';
+    const editId = VS.chForm && VS.chForm.edit; const type = editId ? 'telegram' : $('#ch-type').value, name = $('#ch-name').value.trim();
     const events = $$('[data-chev]').filter(c => c.checked).map(c => c.dataset.chev);
+    const saved = () => { toast('Channel saved'); VS.chForm = false; VS.chType = null; VS.reload = true; render(true); };
+    if (type === 'telegram') {
+      const token = $('#ch-token').value.trim(), chat = $('#ch-chat').value.trim(), thread = $('#ch-thread').value.trim();
+      if (!name || !chat || (!editId && !token)) { toast('Give the channel a name, a bot token and a chat ID', true); return; }
+      const body = { name, chat_id: chat, message_thread_id: thread ? +thread : null, notify_events: events, ...(token ? { bot_token: token } : {}) };
+      try { if (editId) await patch('/settings/telegram/' + editId, body); else await post('/settings/telegram', { ...body, enabled: true }); saved(); } catch (e) { fail(e); }
+      return;
+    }
+    const url = $('#ch-url').value.trim(), secret = $('#ch-secret') ? $('#ch-secret').value.trim() : '';
     if (!name || !url) { toast('Give the channel a name and a URL', true); return; }
     const config = type === 'webhook' ? { url, ...(secret ? { secret } : {}), notify_events: events } : { webhook_url: url, notify_events: events };
-    try { await post('/settings/channels', { name, type, enabled: true, config }); toast('Channel saved'); VS.chForm = false; VS.reload = true; render(true); } catch (e) { fail(e); }
+    try { await post('/settings/channels', { name, type, enabled: true, config }); saved(); } catch (e) { fail(e); }
   },
-  async chToggle(arg) { const [id, on] = arg.split('|'); try { await patch('/settings/channels/' + id, { enabled: on === '1' }); VS.reload = true; render(true); } catch (e) { fail(e); } },
-  chDelAsk(id) { VS.chDel = +id; render(true); },
-  async chDelete(id) { try { await del('/settings/channels/' + id); toast('Channel deleted'); VS.chDel = null; VS.reload = true; render(true); } catch (e) { fail(e); } },
+  async chToggle(arg) { const [ref, on] = arg.split('|'); try { await patch(chUrl(ref), { enabled: on === '1' }); VS.reload = true; render(true); } catch (e) { fail(e); } },
+  async chTest(ref) { try { await post(chUrl(ref) + '/test', {}); toast('Test message sent'); } catch (e) { fail(e); } },
+  chDelAsk(ref) { VS.chDel = ref; render(true); },
+  async chDelete(ref) { try { await del(chUrl(ref)); toast('Channel deleted'); VS.chDel = null; VS.reload = true; render(true); } catch (e) { fail(e); } },
   async autores(v) { try { await put('/settings/auto-resolve', { days: v ? +v : null }); toast(v ? `Issues resolve after ${v} quiet days` : 'Auto-resolve is off'); VS.reload = true; render(true); } catch (e) { fail(e); } },
   mtab(t) { VS.mtab = t; render(true); },
   tokForm() { VS.tokForm = true; render(true).then(() => { const n = $('#tk-name'); if (n) n.focus(); }); },
@@ -142,7 +152,7 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.dataset.thtype) { fillTargets(t.value); $('#th-target').placeholder = THR_HINT[t.value] || ''; }
-  if (t.dataset.chtype) { const wh = t.value === 'webhook'; $('#ch-secret-f').style.display = wh ? '' : 'none'; $('#ch-help').textContent = wh ? 'HTTPS endpoint that receives the issue events.' : `The ${t.value === 'slack' ? 'Slack' : 'Discord'} incoming webhook URL.`; }
+  if (t.dataset.chtype) { const v = t.value, tg = v === 'telegram'; VS.chType = v; $('#ch-secret-f').style.display = v === 'webhook' ? '' : 'none'; $('#ch-url-f').style.display = tg ? 'none' : ''; $('#ch-tg-f').style.display = tg ? '' : 'none'; $('#ch-help').textContent = CH_HELP[v] || CH_HELP.webhook; }
 });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { closePop(); closeDrawer(); document.body.classList.remove('nav-open'); }

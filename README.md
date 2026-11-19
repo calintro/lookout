@@ -22,6 +22,7 @@ Lookout is an open-source, self-hosted alternative to Laravel Nightwatch. It is 
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Telegram alerts](#telegram-alerts)
 - [MCP server](#mcp-server)
 - [Security](#security)
 - [Development](#development)
@@ -72,7 +73,7 @@ Lookout is an open-source, self-hosted alternative to Laravel Nightwatch. It is 
 <tr>
 <td width="50%" valign="top">
 <a href="docs/images/screenshots/settings.png"><img src="docs/images/screenshots/settings.png" alt="Settings with p95 thresholds per route, job and query, and alert channels" /></a>
-<b>Settings.</b> Performance thresholds per route, job, query and other types. Alert channels: webhook (HMAC-signed), Slack, Discord.
+<b>Settings.</b> Performance thresholds per route, job, query and other types. Alert channels: Telegram, webhook (HMAC-signed), Slack, Discord.
 </td>
 <td width="50%" valign="top">
 <a href="docs/images/screenshots/mcp.png"><img src="docs/images/screenshots/mcp.png" alt="The MCP page with personal tokens and setup snippets for Claude Code, Codex, Cursor and VS Code" /></a>
@@ -186,7 +187,7 @@ Lookout reads through the `nightowl_read` connection. If `config/database.php` d
 
 - `SELECT` on the NightOwl tables;
 - `UPDATE` on `nightowl_issues` and `INSERT` on `nightowl_issue_activity` and `nightowl_issue_comments`, for issue edits;
-- writes on `nightowl_settings` and `nightowl_alert_channels`, for the Settings page.
+- writes on `nightowl_settings` and `nightowl_alert_channels`, for the Settings page and the Telegram watermark.
 
 ### Nova mode
 
@@ -245,9 +246,12 @@ All keys live in `config/lookout.php`.
 | `home`, `logout_url`, `login_url` | `null` | User menu links outside Nova mode. |
 | `storage_prefix` | `lookout-` | localStorage prefix for theme, period and environment. |
 | `auto_resolve.schedule`, `auto_resolve.at` | `true`, `03:40` | Daily `lookout:auto-resolve` while Lookout is enabled. |
+| `telegram.enabled` | `true` | `LOOKOUT_TELEGRAM_ENABLED`. Schedules `lookout:telegram-notify` every minute. See [Telegram alerts](#telegram-alerts). |
+| `telegram.api_base` | `https://api.telegram.org` | `LOOKOUT_TELEGRAM_API_BASE`. The Bot API host, or a proxy in front of it. |
+| `telegram.environment` | `null` | `LOOKOUT_TELEGRAM_ENVIRONMENT`. Whose issues go to Telegram: `null` is this app's environment, `*` is every environment. |
 | `mcp.*` | see below | The MCP server. |
 
-To keep auto-resolve days next to your other settings, bind your own `Lookout\Contracts\SettingStore`. The default store uses `nightowl_settings`.
+To keep auto-resolve days, Telegram channels and the Telegram watermark next to your other settings, bind your own `Lookout\Contracts\SettingStore`. The default store uses `nightowl_settings`.
 
 To narrow who issues can be assigned to, set a scope. The default is every user the gate lets in, checked one by one among the first 2,000 users by name, so set a scope on apps with large user tables:
 
@@ -256,6 +260,27 @@ use Lookout\Lookout;
 
 Lookout::assignableUsersUsing(fn ($query) => $query->where('role', 'admin'));
 ```
+
+## Telegram alerts
+
+Lookout can post new and reopened issues to a Telegram group, channel or forum topic. The NightOwl agent sends webhook, Slack and Discord alerts itself. It cannot send to Telegram, so Lookout does that part: the channels live in Lookout's setting store, and the `lookout:telegram-notify` command delivers them.
+
+1. **Create a bot.** Message [@BotFather](https://t.me/BotFather), send `/newbot` and copy the token it gives you (`123456789:AA…`).
+2. **Add the bot to the chat.** In a group, add it as a member. In a channel, make it an administrator that can post messages.
+3. **Get the chat ID.** For a public channel, `@channelname` works. For a group, send a message in it, then open `https://api.telegram.org/bot<token>/getUpdates` and read `chat.id`. Group and channel IDs are negative, for example `-1001234567890`. In a group with topics, `message_thread_id` in the same response is the topic ID.
+4. **Add the channel** in Lookout under Settings → Notifications → Add channel → Telegram: a name, the bot token, the chat ID, an optional topic ID, and the events to send. Then press **Send test**: the test message is sent right away. If it fails, Lookout shows Telegram's own error, for example `Bad Request: chat not found`.
+
+How delivery works:
+
+- `lookout:telegram-notify` runs every minute from Laravel's scheduler, so `php artisan schedule:run` must be running (cron or `schedule:work`). It runs with `withoutOverlapping()` and `onOneServer()`; the latter needs a cache store that supports locks.
+- It reads NightOwl's own records. A new issue is one created since the last run. A reopened issue is one the agent reopened because it came back after being resolved; reopening by hand in Lookout sends nothing. These are the same two events the agent's own channels get.
+- The first run only records the current time, so no history is sent. After that, each issue event goes out once per channel. At most 20 messages go to one channel per run; the rest are counted in one "and N more" message.
+- Only issues of this app's environment are sent (`nightowl.environment`, else `app.env`). `LOOKOUT_TELEGRAM_ENVIRONMENT=*` sends every environment.
+- If a send fails, the error is logged without the token. Delivery to the other channels goes on. The failed message is retried on the next one or two runs, then dropped.
+- If your servers cannot reach `api.telegram.org`, point `LOOKOUT_TELEGRAM_API_BASE` at a proxy that forwards `/bot<token>/sendMessage`.
+- `LOOKOUT_TELEGRAM_ENABLED=false` stops the schedule and the command.
+
+The bot token is stored in the setting store, as webhook secrets are stored in `nightowl_alert_channels`. After saving, Lookout shows only its last four characters. To keep the token, leave the field empty when you edit a channel. The token is part of the Bot API URL, so Lookout sends the request with Nightwatch recording paused and never logs the URL.
 
 ## MCP server
 
@@ -298,9 +323,9 @@ With `laravel/mcp` installed, Lookout serves an MCP server at `/mcp/lookout`. It
 
 ## Security
 
-**Lookout's own traffic.** Lookout's pages and API carry secrets: a new MCP token in the response that creates it, the shared token in `X-Api-Token`, webhook URLs and signing secrets in the alert channel requests. NightOwl records every request of your app, so without an exclusion every other viewer could read them on Lookout's request pages. That is why `ignore_own_routes` is on by default. NightOwl still keeps exceptions thrown on ignored routes.
+**Lookout's own traffic.** Lookout's pages and API carry secrets: a new MCP token in the response that creates it, the shared token in `X-Api-Token`, webhook URLs, signing secrets and Telegram bot tokens in the alert channel requests. NightOwl records every request of your app, so without an exclusion every other viewer could read them on Lookout's request pages. That is why `ignore_own_routes` is on by default. NightOwl still keeps exceptions thrown on ignored routes.
 
-- If you turn `ignore_own_routes` off, add `plain_token,url,webhook_url,secret` to `NIGHTOWL_REDACT_RESPONSE_FIELDS` and `NIGHTWATCH_REDACT_PAYLOAD_FIELDS`, and `X-Api-Token` to `NIGHTWATCH_REDACT_HEADERS`.
+- If you turn `ignore_own_routes` off, add `plain_token,url,webhook_url,secret,bot_token` to `NIGHTOWL_REDACT_RESPONSE_FIELDS` and `NIGHTWATCH_REDACT_PAYLOAD_FIELDS`, and `X-Api-Token` to `NIGHTWATCH_REDACT_HEADERS`.
 - If the app also reports to the Laravel Nightwatch service (`NIGHTOWL_PARALLEL_WITH_NIGHTWATCH=true`), Lookout's routes are not excluded there: add `X-Api-Token` to `NIGHTWATCH_REDACT_HEADERS` (its default list redacts `Authorization` but not `X-Api-Token`), or send MCP tokens as `Authorization: Bearer`.
 
 **One access level.** Everyone who passes `viewLookout` can also change settings: thresholds, auto-resolve, alert channels (including their URLs), bulk status changes, and the "can resolve" right of their own MCP tokens. Grant the gate only to people you trust with alerting, not for read-only triage.

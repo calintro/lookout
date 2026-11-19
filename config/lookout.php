@@ -38,7 +38,8 @@ return [
     /*
     | The read connection of the NightOwl database. When it is not defined in config/database.php, Lookout defines it
     | from nightowl.database. Needs SELECT, plus UPDATE on nightowl_issues, INSERT on nightowl_issue_activity and
-    | nightowl_issue_comments, and writes on nightowl_settings / nightowl_alert_channels for the Settings page.
+    | nightowl_issue_comments, and writes on nightowl_settings / nightowl_alert_channels for the Settings page (and
+    | for lookout:telegram-notify, which keeps its watermark in nightowl_settings with the default SettingStore).
     */
     'connection' => env('LOOKOUT_DB_CONNECTION', 'nightowl_read'),
 
@@ -71,6 +72,18 @@ return [
     'auto_resolve' => [
         'schedule' => true,
         'at' => '03:40',
+    ],
+
+    /*
+    | Telegram alert channels, added in Settings and kept in the SettingStore (the NightOwl agent cannot send to
+    | Telegram). lookout:telegram-notify runs every minute while Lookout and 'enabled' are on and posts issues that
+    | became new or were reopened. api_base: the Bot API host, or a proxy in front of it. environment: whose issues
+    | are sent; null = this app's (nightowl.environment, else app.env), '*' = every environment.
+    */
+    'telegram' => [
+        'enabled' => (bool) env('LOOKOUT_TELEGRAM_ENABLED', true),
+        'api_base' => env('LOOKOUT_TELEGRAM_API_BASE', 'https://api.telegram.org'),
+        'environment' => env('LOOKOUT_TELEGRAM_ENVIRONMENT'),
     ],
 
     /*

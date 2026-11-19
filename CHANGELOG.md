@@ -4,6 +4,17 @@ All notable changes to Lookout are documented here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-19
+
+### Added
+
+- Telegram alert channels. Under Settings → Notifications, Telegram is a channel type next to webhook, Slack and Discord. A channel has a bot token, a chat ID (a numeric ID or `@channelname`), an optional forum topic ID and the events to send (`issue.new`, `issue.reopened`). Channels can be edited, enabled, disabled and deleted. **Send test** sends a test message right away and shows Telegram's error text if it fails.
+  - The NightOwl agent cannot send to Telegram, so these channels are stored in Lookout's `SettingStore` (key `monitoring.telegram_channels`), not in `nightowl_alert_channels`. The settings API lists both kinds of channel together. New endpoints: `POST settings/telegram`, `PATCH|DELETE settings/telegram/{id}` and `POST settings/telegram/{id}/test`.
+  - The bot token is never sent back to the browser: the API shows only its last four characters. When a channel is edited, an empty token field keeps the stored token.
+  - `lookout:telegram-notify` runs every minute from the package schedule, with `withoutOverlapping()` and `onOneServer()`. It sends issues the agent created or reopened since a watermark kept in the setting store. The first run sends no history. Each event is sent once per channel. One run sends at most 20 messages per channel (`--limit`), then one "and N more" message. Only issues of the app's own environment are sent unless `LOOKOUT_TELEGRAM_ENVIRONMENT=*`.
+  - Messages use the Bot API's `sendMessage` with HTML: app and environment, new or reopened, issue number, type, exception class or target, message, location, occurrences, users affected, and a link to the issue in Lookout. Requests time out after 5 seconds and are not retried. A failure is logged without the token, and delivery to the other channels goes on. The request is sent with Nightwatch recording paused, so the token in the URL is not stored in the outgoing-request telemetry.
+  - Config: `telegram.enabled` (`LOOKOUT_TELEGRAM_ENABLED`), `telegram.api_base` (`LOOKOUT_TELEGRAM_API_BASE`, for a proxy) and `telegram.environment` (`LOOKOUT_TELEGRAM_ENVIRONMENT`).
+
 ## [0.1.3] - 2026-11-19
 
 ### Security
