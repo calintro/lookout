@@ -5,6 +5,7 @@ namespace Lookout\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Validation\ValidationException;
 use Lookout\Http\Requests\IssueUpdateRequest;
 use Lookout\Http\Requests\WindowRequest;
 use Lookout\Lookout;
@@ -276,6 +277,10 @@ class ApiController extends Controller
 
     public function logs(WindowRequest $request): JsonResponse
     {
+        if (($request->page() - 1) * $request->limit(50) > Raw::LOGS_MAX_OFFSET) {
+            throw ValidationException::withMessages(['page' => 'Logs can be paged through the first '.number_format(Raw::LOGS_MAX_OFFSET).' entries. Narrow the window or the search.']);
+        }
+
         return response()->json(['window' => $request->window()->raw()->toArray(), 'page' => $request->page(), 'limit' => $request->limit(50),
             ...$this->raw->logs($request->window(), $request->environment(), $request->input('level'), $request->input('q'), $request->limit(50), $request->page(), $request->input('user'))]);
     }

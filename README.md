@@ -23,6 +23,7 @@ Lookout is an open-source, self-hosted alternative to Laravel Nightwatch. It is 
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [MCP server](#mcp-server)
+- [Security](#security)
 - [Development](#development)
 
 ## Features
@@ -177,6 +178,8 @@ composer require nikolai-vysotskyi/lookout
 
 4. **Open `/lookout`.** Lookout is on while `nightowl.enabled` is on. It answers 404 otherwise.
 
+Lookout keeps its own requests out of the telemetry: at boot it appends `lookout`, `lookout/*` and the MCP path (following `path` and `mcp.path`) to `nightowl.ignore_routes`, next to whatever you set in `NIGHTOWL_IGNORE_ROUTES`. See [Security](#security).
+
 ### Reading connection
 
 Lookout reads through the `nightowl_read` connection. If `config/database.php` does not define it, Lookout builds one from `nightowl.database`. Define it yourself to use a separate, less privileged role. That role needs:
@@ -231,6 +234,7 @@ All keys live in `config/lookout.php`.
 | `enabled` | `null` | `null` follows `nightowl.enabled`. `false` closes Lookout (404) and pauses its schedule. |
 | `path` | `lookout` | URL prefix: `/{path}`, `/{path}/api/*`, `/{path}/assets/*`. |
 | `domain` | `null` | Restricts Lookout to one domain. In Nova mode, `nova.domain` is used. |
+| `ignore_own_routes` | `true` | Appends Lookout's web and MCP paths to `nightowl.ignore_routes`. `LOOKOUT_IGNORE_OWN_ROUTES=false` turns it off. |
 | `auth` | `gate` | `gate` uses `middleware` plus the gate. `nova` uses Nova's API stack plus the gate. |
 | `middleware` | `['web', 'auth']` | The stack in `gate` mode. |
 | `gate` | `viewLookout` | The ability checked on every page and API call. |
@@ -245,7 +249,7 @@ All keys live in `config/lookout.php`.
 
 To keep auto-resolve days next to your other settings, bind your own `Lookout\Contracts\SettingStore`. The default store uses `nightowl_settings`.
 
-To narrow who issues can be assigned to, set a scope. The default is every user the gate lets in:
+To narrow who issues can be assigned to, set a scope. The default is every user the gate lets in, checked one by one among the first 2,000 users by name, so set a scope on apps with large user tables:
 
 ```php
 use Lookout\Lookout;
@@ -268,10 +272,13 @@ With `laravel/mcp` installed, Lookout serves an MCP server at `/mcp/lookout`. It
 
 **Access.** Each user creates personal tokens on the MCP page in Lookout. The page also shows ready-to-paste snippets for Claude Code, Codex, Cursor and VS Code.
 
-- A token acts as its owner while the owner passes `mcp.gate`. `null` means the app's gate.
-- A token is read-only unless its owner allows "can resolve".
-- `LOOKOUT_MCP_TOKEN` with `LOOKOUT_MCP_USER_ID` is a shared token for automation. It acts as that user and may resolve.
+- A token acts as its owner while the owner passes `mcp.gate`. `null` means the app's gate (`gate`, i.e. `viewLookout` by default); there is no separate MCP ability unless you set one.
+- A token is read-only unless its owner allows "can resolve". The only write it allows is resolving an issue (`resolve_issue`).
+- `LOOKOUT_MCP_TOKEN` with `LOOKOUT_MCP_USER_ID` is a shared token for automation. It acts as that user and may resolve. Use a long random value (32+ characters, e.g. `php -r "echo bin2hex(random_bytes(32));"`); a shorter one still works but logs a warning once a day.
+- Tokens are sent as `Authorization: Bearer <token>` or `X-Api-Token: <token>`.
 - Other credentials of your app (API keys, OAuth tokens) are refused.
+- The server answers 404 while Lookout is disabled, like the web app.
+- Failed token checks are limited per IP before any token lookup (`mcp.failed_per_minute`, 30 by default): above that the IP gets 429 with `Retry-After` for the rest of the minute. Successful requests are not counted.
 - Requests are limited per credential (`mcp.per_minute`, 600 by default). To use your app's own limiter instead, set `mcp.middleware` to the middleware that should run after the token check, e.g. `['rate:mcp']`; `[]` drops the limit.
 
 **Tokens table.** `lookout_mcp_tokens` is created on the default connection with a foreign key to the users table. Its `user_id` follows `users.id`: read when the migration runs, or set `mcp.user_id_type` to `int` or `bigint` (an `INT UNSIGNED` `users.id` on MySQL needs `int`, which the migration finds by itself). Set `mcp.tokens_connection` to keep the table elsewhere; on another connection than the users table it gets an index on `user_id` but no foreign key.
@@ -283,10 +290,28 @@ With `laravel/mcp` installed, Lookout serves an MCP server at `/mcp/lookout`. It
 | `mcp.gate` | `null` (the app's gate) |
 | `mcp.token`, `mcp.user_id` | `LOOKOUT_MCP_TOKEN`, `LOOKOUT_MCP_USER_ID` |
 | `mcp.per_minute`, `mcp.rate_limiter` | `600`, `lookout-mcp` |
+| `mcp.failed_per_minute` | `LOOKOUT_MCP_FAILED_PER_MINUTE`, `30` |
 | `mcp.middleware` | `null` (`ThrottleRequests` with `mcp.rate_limiter`) |
 | `mcp.tokens_table`, `mcp.token_prefix` | `lookout_mcp_tokens`, `lookout_` (12 characters at most) |
 | `mcp.tokens_connection`, `mcp.user_id_type` | `LOOKOUT_MCP_TOKENS_CONNECTION` (the default connection), `null` (read from `users.id`) |
 | `mcp.server_name`, `mcp.client_name`, `mcp.app_name` | derived from `app.name` |
+
+## Security
+
+**Lookout's own traffic.** Lookout's pages and API carry secrets: a new MCP token in the response that creates it, the shared token in `X-Api-Token`, webhook URLs and signing secrets in the alert channel requests. NightOwl records every request of your app, so without an exclusion every other viewer could read them on Lookout's request pages. That is why `ignore_own_routes` is on by default. NightOwl still keeps exceptions thrown on ignored routes.
+
+- If you turn `ignore_own_routes` off, add `plain_token,url,webhook_url,secret` to `NIGHTOWL_REDACT_RESPONSE_FIELDS` and `NIGHTWATCH_REDACT_PAYLOAD_FIELDS`, and `X-Api-Token` to `NIGHTWATCH_REDACT_HEADERS`.
+- If the app also reports to the Laravel Nightwatch service (`NIGHTOWL_PARALLEL_WITH_NIGHTWATCH=true`), Lookout's routes are not excluded there: add `X-Api-Token` to `NIGHTWATCH_REDACT_HEADERS` (its default list redacts `Authorization` but not `X-Api-Token`), or send MCP tokens as `Authorization: Bearer`.
+
+**One access level.** Everyone who passes `viewLookout` can also change settings: thresholds, auto-resolve, alert channels (including their URLs), bulk status changes, and the "can resolve" right of their own MCP tokens. Grant the gate only to people you trust with alerting, not for read-only triage.
+
+**Alert channel URLs.** Slack channels must point at `https://hooks.slack.com/`, Discord channels at `https://discord.com/api/webhooks/` or `https://discordapp.com/api/webhooks/`. Generic webhooks may not point at `localhost` or a literal private, loopback, link-local or reserved IP. Host names are not resolved, so a public name that resolves to an internal address still passes: restrict the agent's outbound traffic where that matters. Changing a webhook's URL drops its stored signing secret unless you send a new one.
+
+**What viewers see.** Everything NightOwl captured: request headers, payloads and response bodies (as far as capture and redaction allow), client IPs, user names and emails, mail recipients and log context.
+
+**Middleware.** If you replace `middleware`, keep `web` in the stack: it carries the session and CSRF protection of the state-changing routes. The Lookout page is sent with `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`.
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Development
 

@@ -5,6 +5,9 @@ namespace Lookout\Http\Middleware;
 use Closure;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\RateLimiter;
 use Lookout\Lookout;
 use Lookout\Models\McpToken;
 use Symfony\Component\HttpFoundation\Response;
@@ -15,14 +18,31 @@ use Symfony\Component\HttpFoundation\Response;
  * lookout.mcp.token, which acts as the user lookout.mcp.user_id. Other credentials of the app (API keys, OAuth
  * tokens) never do. The request attribute mcp_can_resolve tells write tools whether the credential may change
  * issues: a personal token only with can_resolve, the shared token always.
+ *
+ * Closed (404) while Lookout is disabled. Failed attempts are counted per IP before any token lookup: above
+ * lookout.mcp.failed_per_minute the IP gets 429 until the minute is over; successful requests are not counted.
  */
 class AuthenticateMcpToken
 {
+    /** A shared token shorter than this can be guessed; it still works, but is reported once a day. */
+    public const MIN_SHARED_TOKEN_LENGTH = 32;
+
     /**
      * @param  Closure(Request): (Response)  $next
      */
     public function handle(Request $request, Closure $next): Response
     {
+        abort_unless(Lookout::enabled(), 404);
+
+        $failures = 'lookout-mcp-auth-failed:'.$request->ip();
+        $maxFailures = max(1, (int) config('lookout.mcp.failed_per_minute', 30));
+
+        if (RateLimiter::tooManyAttempts($failures, $maxFailures)) {
+            $retryAfter = RateLimiter::availableIn($failures);
+
+            return response()->json(['error' => 'too_many_attempts', 'message' => 'Too many failed attempts. Try again later.'], 429, ['Retry-After' => (string) $retryAfter]);
+        }
+
         $given = (string) ($request->header('X-Api-Token') ?? $request->bearerToken());
 
         if ($given !== '' && ($personal = McpToken::findActive($given)) !== null) {
@@ -36,8 +56,11 @@ class AuthenticateMcpToken
         }
 
         $expected = (string) config('lookout.mcp.token');
+        self::warnAboutShortSharedToken($expected);
 
         if ($expected === '' || $given === '' || ! hash_equals($expected, $given)) {
+            RateLimiter::hit($failures, 60);
+
             return response()->json([
                 'error' => 'unauthenticated',
                 'message' => 'This MCP server needs a monitoring token.',
@@ -52,6 +75,15 @@ class AuthenticateMcpToken
         }
 
         return $this->actAs($request, $next, $user, 'monitoring_token', true);
+    }
+
+    private static function warnAboutShortSharedToken(string $token): void
+    {
+        if ($token === '' || strlen($token) >= self::MIN_SHARED_TOKEN_LENGTH || ! Cache::add('lookout-mcp-short-token-warned', true, 86400)) {
+            return;
+        }
+
+        Log::warning('Lookout: LOOKOUT_MCP_TOKEN is shorter than '.self::MIN_SHARED_TOKEN_LENGTH.' characters and can be guessed. Use a long random value, e.g. php -r "echo bin2hex(random_bytes(32));".');
     }
 
     /**

@@ -19,6 +19,9 @@ class Lookout
     /** The Gate ability the web app and the Nova menu link check (deny unless the app defines it). */
     public const GATE = 'viewLookout';
 
+    /** Without a scope, at most this many users (by name) are checked against the gate for the assignee list. */
+    public const ASSIGNABLE_SCAN_LIMIT = 2000;
+
     /** @var (Closure(Builder): (Builder|null))|null */
     protected static ?Closure $assignableScope = null;
 
@@ -80,7 +83,8 @@ class Lookout
 
     /**
      * Narrows the users issues can be assigned to, e.g. fn ($query) => $query->where('role', 'admin'). Without it
-     * every user that passes the gate is assignable (checked one by one, fine for small user tables).
+     * every user that passes the gate is assignable, checked one by one over the first ASSIGNABLE_SCAN_LIMIT users by
+     * name: set a scope on apps with large user tables.
      *
      * @param  (Closure(Builder): (Builder|null))|null  $scope
      */
@@ -94,12 +98,13 @@ class Lookout
      */
     public static function assignableUsers(int $limit = 200): array
     {
+        $limit = max(1, min($limit, 200));
         $query = (self::userModel())::query()->orderBy('name');
 
         if (static::$assignableScope !== null) {
             $users = ((static::$assignableScope)($query) ?? $query)->limit($limit)->get(['id', 'name', 'email']);
         } else {
-            $users = $query->lazy(500)->filter(fn (Model $user): bool => self::allows($user))->take($limit)->values();
+            $users = $query->lazy(500)->take(self::ASSIGNABLE_SCAN_LIMIT)->filter(fn (Model $user): bool => self::allows($user))->take($limit)->values();
         }
 
         return $users->map(fn (Model $u): array => ['id' => (int) $u->id, 'name' => $u->name, 'email' => $u->email])->values()->all();

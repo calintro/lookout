@@ -16,6 +16,13 @@ return [
     'domain' => env('LOOKOUT_DOMAIN'),
 
     /*
+    | Keep Lookout's own requests out of the telemetry: '{path}', '{path}/*' and the MCP path are appended to
+    | nightowl.ignore_routes at boot (what the app configured there stays). Its pages and API carry MCP tokens, webhook
+    | URLs and secrets that every other viewer would otherwise see on the request pages. Exceptions are still kept.
+    */
+    'ignore_own_routes' => (bool) env('LOOKOUT_IGNORE_OWN_ROUTES', true),
+
+    /*
     | Who gets in.
     | - gate: the 'middleware' stack below, then the Gate ability 'gate' (denied unless the app defines it).
     | - nova: Nova's own API stack (nova.api_middleware: Nova login, Nova's gate, ...) on nova.domain, then the Gate
@@ -70,7 +77,8 @@ return [
     | The MCP server for coding agents (needs laravel/mcp). Opened by a personal token a user creates in Lookout
     | (token_prefix: at most 12 characters; stored in tokens_table) or by the shared token, which acts as user_id.
     | 'gate' is the ability a token's user must pass (null = the app's gate). per_minute is the limit per
-    | credential, under rate_limiter.
+    | credential, under rate_limiter. failed_per_minute: failed token checks per IP before it gets 429 for the rest of
+    | the minute. The shared token should be a long random value (32+ characters; shorter ones log a warning).
     |
     | middleware: what runs after the token check; null = ThrottleRequests with rate_limiter, a list replaces it
     | (e.g. the app's own limiter). tokens_connection: where tokens_table lives (null = the default connection);
@@ -84,6 +92,7 @@ return [
         'token' => env('LOOKOUT_MCP_TOKEN'),
         'user_id' => env('LOOKOUT_MCP_USER_ID'),
         'per_minute' => (int) env('LOOKOUT_MCP_PER_MINUTE', 600),
+        'failed_per_minute' => (int) env('LOOKOUT_MCP_FAILED_PER_MINUTE', 30),
         'rate_limiter' => 'lookout-mcp',
         'middleware' => null,
         'tokens_connection' => env('LOOKOUT_MCP_TOKENS_CONNECTION'),

@@ -25,7 +25,8 @@ class PageController extends Controller
         $user = $request->user();
         $base = '/'.Lookout::path();
 
-        return view('lookout::app', [
+        // The shell has one-click actions (resolve, ignore, token toggles): never render it inside a frame.
+        return response()->view('lookout::app', [
             'boot' => [
                 'base_path' => $base,
                 'api_base' => $base.'/api',
@@ -38,6 +39,9 @@ class PageController extends Controller
             ],
             'script' => self::asset('app.js'),
             'style' => self::asset('app.css'),
+        ])->withHeaders([
+            'X-Frame-Options' => 'DENY',
+            'Content-Security-Policy' => "frame-ancestors 'none'",
         ]);
     }
 

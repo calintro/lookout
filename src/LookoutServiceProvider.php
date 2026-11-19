@@ -73,6 +73,7 @@ class LookoutServiceProvider extends ServiceProvider
         });
 
         $this->app->booted(function (): void {
+            $this->ignoreOwnRoutes();
             $this->routes();
         });
     }
@@ -102,6 +103,31 @@ class LookoutServiceProvider extends ServiceProvider
             Mcp::web('/'.trim((string) config('lookout.mcp.path', 'mcp/lookout'), '/'), LookoutServer::class)
                 ->middleware([AuthenticateMcpToken::class, ...self::mcpMiddleware()]);
         }
+    }
+
+    /**
+     * Keeps Lookout's own traffic out of the telemetry it shows: its shell, API and assets, and the MCP route carry
+     * tokens, webhook URLs and secrets that any other viewer would otherwise read on the request pages. Appends to
+     * nightowl.ignore_routes (a list, or the comma-separated string a published config may hold) and keeps whatever
+     * the app put there. The agent matches the patterns against route paths at drain time; exceptions are still kept.
+     */
+    protected function ignoreOwnRoutes(): void
+    {
+        if (! config('lookout.ignore_own_routes', true)) {
+            return;
+        }
+
+        $configured = config('nightowl.ignore_routes', []);
+        $patterns = is_array($configured) ? $configured : explode(',', (string) $configured);
+        $path = Lookout::path();
+        // An empty path would turn into "/*" and drop every request of the app.
+        $own = $path === '' ? [] : [$path, $path.'/*'];
+        if (config('lookout.mcp.enabled', true)) {
+            $own[] = trim((string) config('lookout.mcp.path', 'mcp/lookout'), '/');
+        }
+
+        $patterns = array_map(fn ($p) => is_string($p) ? trim($p) : $p, $patterns);
+        config(['nightowl.ignore_routes' => array_values(array_unique(array_filter([...$patterns, ...$own], fn ($p) => $p !== '' && $p !== null), SORT_REGULAR))]);
     }
 
     /**

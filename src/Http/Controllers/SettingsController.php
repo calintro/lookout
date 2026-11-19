@@ -72,14 +72,19 @@ class SettingsController extends Controller
      */
     private function channelRules(mixed $type, bool $creating): array
     {
-        $urlKey = $type === 'webhook' ? 'url' : 'webhook_url';
+        $urlKey = Settings::urlKey((string) $type);
         $required = $creating ? 'required' : 'sometimes';
+        $allowedUrl = function (string $attribute, mixed $value, \Closure $fail) use ($type): void {
+            if (is_string($value) && ($problem = Settings::channelUrlProblem((string) $type, $value)) !== null) {
+                $fail($problem);
+            }
+        };
 
         return [
             'name' => [$required, 'string', 'max:100'],
             'enabled' => ['sometimes', 'boolean'],
             'config' => [$required, 'array'],
-            "config.{$urlKey}" => [$creating ? 'required' : 'sometimes', 'url:https', 'max:2000'],
+            "config.{$urlKey}" => [$creating ? 'required' : 'sometimes', 'url:https', 'max:2000', $allowedUrl],
             'config.secret' => ['sometimes', 'nullable', 'string', 'max:200'],
             'config.notify_events' => ['sometimes', 'nullable', 'array'],
             'config.notify_events.*' => [Rule::in(Settings::EVENTS)],

@@ -4,6 +4,24 @@ All notable changes to Lookout are documented here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-19
+
+### Security
+
+- Lookout's own requests no longer land in the telemetry it shows. At boot it appends `{path}`, `{path}/*` and the MCP path to `nightowl.ignore_routes`, keeping the app's patterns. New MCP tokens, the shared token in `X-Api-Token`, webhook URLs and secrets could otherwise be read by every viewer on the request pages. `ignore_own_routes` (`LOOKOUT_IGNORE_OWN_ROUTES`, on by default) turns it off.
+- The MCP server answers 404 while Lookout is disabled, as the web app and the docs already did.
+- Failed MCP token checks are limited per IP before the token lookup (`mcp.failed_per_minute`, 30): above that, 429 with `Retry-After`. Successful requests are not counted. A shared `LOOKOUT_MCP_TOKEN` shorter than 32 characters logs a warning once a day.
+- Alert channels: changing a webhook's URL drops its stored signing secret unless a new one is sent. Slack URLs must start with `https://hooks.slack.com/`, Discord URLs with `https://discord.com/api/webhooks/` or `https://discordapp.com/api/webhooks/`. Generic webhooks may not point at `localhost` or a literal private, loopback, link-local or reserved IP (names are not resolved).
+- The Lookout page is sent with `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`.
+- The SPA escapes the period label, issue status and priority, and HTTP method classes too (defence in depth; none was exploitable).
+
+### Changed
+
+- The assignee list checks at most the first 2,000 users by name against the gate when no `assignableUsersUsing()` scope is set, and returns at most 200.
+- Logs can be paged through the first 10,000 entries; deeper pages answer 422.
+- The MCP page no longer claims tokens can ignore or reopen issues: the only write tool is `resolve_issue`.
+- README: a Security section (own-route exclusion, Nightwatch redaction when running in parallel, one access level for reading and settings, what viewers see).
+
 ## [0.1.2] - 2026-11-19
 
 ### Changed

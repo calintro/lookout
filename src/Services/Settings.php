@@ -127,6 +127,12 @@ class Settings
         $config = json_decode((string) $row->config, true) ?: [];
         $updates = array_intersect_key($data, ['name' => 1, 'enabled' => 1]);
         if (isset($data['config'])) {
+            // A signing secret belongs to the receiver it was agreed with: a new URL drops it unless a new one is sent,
+            // so payloads re-pointed elsewhere are not signed with the old receiver's secret.
+            $urlKey = self::urlKey($row->type);
+            if (isset($data['config'][$urlKey]) && $data['config'][$urlKey] !== ($config[$urlKey] ?? null) && ! array_key_exists('secret', $data['config'])) {
+                unset($config['secret']);
+            }
             $updates['config'] = json_encode(self::cleanConfig($row->type, [...$config, ...$data['config']]));
         }
         $this->db()->table('nightowl_alert_channels')->where('id', $id)->update([...$updates, 'updated_at' => now('UTC')->format('Y-m-d H:i:s')]);
@@ -150,6 +156,51 @@ class Settings
     {
         app(SettingStore::class)->put(self::AUTO_RESOLVE_KEY, $days,
             'Monitoring: resolve open NightOwl issues not seen for this many days (7/14/30, null = never). Applied by nightowl:auto-resolve.');
+    }
+
+    public static function urlKey(string $type): string
+    {
+        return $type === 'webhook' ? 'url' : 'webhook_url';
+    }
+
+    /**
+     * Why a channel URL is refused, or null. Slack and Discord only take their own webhook hosts. A generic webhook may
+     * point anywhere public, but not at localhost or a literal private, loopback, link-local or reserved IP.
+     *
+     * Residual risk: hosts are not resolved here, so a public name that resolves to an internal address (or is
+     * re-pointed later, DNS rebinding) still passes. The agent sends the alerts; restrict its egress where it matters.
+     */
+    public static function channelUrlProblem(string $type, string $url): ?string
+    {
+        $lower = strtolower($url);
+
+        if ($type === 'slack') {
+            return str_starts_with($lower, 'https://hooks.slack.com/') ? null : 'A Slack webhook URL starts with https://hooks.slack.com/.';
+        }
+        if ($type === 'discord') {
+            return str_starts_with($lower, 'https://discord.com/api/webhooks/') || str_starts_with($lower, 'https://discordapp.com/api/webhooks/')
+                ? null : 'A Discord webhook URL starts with https://discord.com/api/webhooks/.';
+        }
+
+        $host = parse_url($url, PHP_URL_HOST);
+        if (! is_string($host) || $host === '') {
+            return 'The URL needs a host.';
+        }
+        $host = rtrim(strtolower(trim($host, '[]')), '.');
+
+        if ($host === 'localhost' || str_ends_with($host, '.localhost')) {
+            return 'The webhook cannot point at localhost.';
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+            return filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE | FILTER_FLAG_GLOBAL_RANGE) === false
+                ? 'The webhook cannot point at a private, loopback or link-local address.' : null;
+        }
+        // Numeric forms an HTTP client may still read as an IPv4 address (2130706433, 0x7f.1, 127.1).
+        if (preg_match('/^(0x[0-9a-f]*|\d+)(\.(0x[0-9a-f]*|\d+))*$/', $host) === 1) {
+            return 'Write the address as a host name or a dotted public IP.';
+        }
+
+        return null;
     }
 
     /**

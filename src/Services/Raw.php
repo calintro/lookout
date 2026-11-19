@@ -258,6 +258,9 @@ class Raw
         return $events;
     }
 
+    /** Logs pages stop here: deeper OFFSETs over an unindexed ILIKE scan cost too much. Narrow the window instead. */
+    public const LOGS_MAX_OFFSET = 10000;
+
     /**
      * @return array{logs: list<array<string, mixed>>, levels: list<string>, has_more: bool}
      */
@@ -302,7 +305,7 @@ class Raw
                 'execution_preview' => $r->execution_preview,
             ])->values()->all(),
             'levels' => $this->db()->table('nightowl_dict_string')->where('kind', 'level')->orderBy('value')->pluck('value')->all(),
-            'has_more' => $rows->count() > $limit,
+            'has_more' => $rows->count() > $limit && $page * $limit <= self::LOGS_MAX_OFFSET,
         ];
     }
 
