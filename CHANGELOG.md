@@ -4,6 +4,12 @@ All notable changes to Lookout are documented here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-19
+
+### Changed
+
+- Fonts are bundled: Inter and Geist Mono (variable, latin, latin-ext and cyrillic subsets, SIL OFL 1.1) ship in `dist/fonts` and are served from the package next to `app.js`. The dashboard no longer loads anything from Google Fonts.
+
 ## [0.1.1] - 2026-11-19
 
 ### Added

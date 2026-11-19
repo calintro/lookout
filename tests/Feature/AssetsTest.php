@@ -25,3 +25,18 @@ it('serves the built SPA from the package with a cache-busting version, behind t
     $this->actingAs($this->admin(false));
     $this->get('/lookout/assets/app.js')->assertForbidden();
 });
+
+it('bundles every font the stylesheet references and loads nothing from Google Fonts', function () {
+    $css = file_get_contents(AssetController::DIST.'/app.css');
+    preg_match_all('#url\("(fonts/[a-z-]+\.woff2)"\)#', $css, $m);
+
+    expect(array_unique($m[1]))->toHaveCount(6);
+    foreach (array_unique($m[1]) as $font) {
+        expect(is_file(AssetController::DIST.'/'.$font))->toBeTrue($font.' is missing');
+    }
+
+    $this->actingAs($this->admin());
+    $this->get('/lookout')->assertOk()->assertDontSee('fonts.googleapis.com', false);
+    $this->get('/lookout/assets/fonts/inter-latin.woff2')->assertOk()->assertHeader('Content-Type', 'font/woff2');
+    $this->get('/lookout/assets/fonts/missing.woff2')->assertNotFound();
+});

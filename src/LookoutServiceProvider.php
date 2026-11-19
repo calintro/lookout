@@ -92,7 +92,7 @@ class LookoutServiceProvider extends ServiceProvider
         $path = Lookout::path();
         $group->group(function () use ($path): void {
             Route::prefix($path.'/api')->group(__DIR__.'/../routes/api.php');
-            Route::get($path.'/assets/{file}', AssetController::class)->where('file', 'app\.(js|css)')->name('lookout.assets');
+            Route::get($path.'/assets/{file}', AssetController::class)->where('file', 'app\.(js|css)|fonts/[a-z-]+\.woff2')->name('lookout.assets');
             Route::get($path.'/{any?}', PageController::class)
                 ->where('any', '^(?!api(/|$)).*')
                 ->name('lookout');
