@@ -1,29 +1,144 @@
 # Lookout
 
-An open-source, self-hosted alternative to Laravel Nightwatch: a monitoring UI for your Laravel app that keeps the data on your own servers.
+[![Latest version on Packagist](https://img.shields.io/packagist/v/nikolai-vysotskyi/lookout.svg)](https://packagist.org/packages/nikolai-vysotskyi/lookout)
+[![Total downloads](https://img.shields.io/packagist/dt/nikolai-vysotskyi/lookout.svg)](https://packagist.org/packages/nikolai-vysotskyi/lookout)
+[![Tests](https://github.com/nikolai-vysotskyi/lookout/actions/workflows/tests.yml/badge.svg)](https://github.com/nikolai-vysotskyi/lookout/actions/workflows/tests.yml)
+[![PHP version](https://img.shields.io/packagist/php-v/nikolai-vysotskyi/lookout.svg)](https://packagist.org/packages/nikolai-vysotskyi/lookout)
+[![Laravel 12 | 13](https://img.shields.io/badge/Laravel-12%20%7C%2013-FF2D20.svg)](https://laravel.com)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Lookout reads the telemetry the [NightOwl agent](https://github.com/lemed99/nightowl-agent) (`nightowl/agent`, MIT) writes to your PostgreSQL. It shows requests, jobs, queries, exceptions and the rest in one dashboard. Errors are grouped into issues you can triage, and coding agents can read them through an MCP server.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshots/dashboard-dark.png" />
+  <img src="docs/images/screenshots/dashboard-light.png" alt="The Lookout dashboard: requests, response times, exceptions, slow targets and jobs of a Laravel app over seven days" />
+</picture>
 
-## Screenshots
+Lookout is an open-source, self-hosted alternative to Laravel Nightwatch. It is a monitoring UI that runs inside your Laravel app and reads the telemetry that the [NightOwl agent](https://github.com/lemed99/nightowl-agent) (`nightowl/agent`, MIT) writes to your own PostgreSQL. You get requests with per-request traces, jobs, queries with N+1 detection, exceptions grouped into issues you can assign and comment on, logs, and an MCP server so coding agents can read the same data. The telemetry never leaves your servers, and there is no per-event bill.
 
-> Screenshots are coming. Until then, `composer require` it and open `/lookout`.
+## Contents
+
+- [Features](#features)
+- [Why Lookout](#why-lookout)
+- [How it compares](#how-it-compares)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [MCP server](#mcp-server)
+- [Development](#development)
 
 ## Features
 
+<table>
+<tr>
+<td width="50%" valign="top">
+<a href="docs/images/screenshots/request-trace.png"><img src="docs/images/screenshots/request-trace.png" alt="A request trace with its middleware, queries, cache events and outgoing HTTP calls on a timeline" /></a>
+<b>Requests and traces.</b> Each route with its p95, error rate and slowest calls. A request opens as a trace: queries, cache events, outgoing HTTP calls, mail, logs and exceptions on one timeline.
+</td>
+<td width="50%" valign="top">
+<a href="docs/images/screenshots/queries.png"><img src="docs/images/screenshots/queries.png" alt="Queries ranked by total time, with a query repeated inside one request flagged as N+1" /></a>
+<b>Queries.</b> The slowest and most frequent statements, per connection, with N+1 detection.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<a href="docs/images/screenshots/issue.png"><img src="docs/images/screenshots/issue.png" alt="An issue with its stack trace, occurrence chart, status, priority, assignee and comments" /></a>
+<b>Issues.</b> Exceptions and slow executions grouped into issues with status, priority, assignee, description, comments and an activity history.
+</td>
+<td width="50%" valign="top">
+<a href="docs/images/screenshots/issues.png"><img src="docs/images/screenshots/issues.png" alt="The issues list with filters for open, unassigned and mine, trend sparklines and bulk actions" /></a>
+<b>Triage.</b> Filters for open, unassigned and your own issues, bulk actions, and automatic resolve after 7, 14 or 30 quiet days.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<a href="docs/images/screenshots/jobs.png"><img src="docs/images/screenshots/jobs.png" alt="Queued jobs with processed, released and failed counts and durations" /></a>
+<b>Jobs, commands and scheduled tasks.</b> Attempts, failures, releases and durations, plus every run of a command or task.
+</td>
+<td width="50%" valign="top">
+<a href="docs/images/screenshots/logs.png"><img src="docs/images/screenshots/logs.png" alt="Application logs filtered by level, with context" /></a>
+<b>Logs.</b> Filter by level, text and user. Each entry links to the request or job that wrote it.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<a href="docs/images/screenshots/route.png"><img src="docs/images/screenshots/route.png" alt="One route over seven days: status codes, average and p95 duration, and its latest requests" /></a>
+<b>Routes.</b> Status codes, average and p95 over time, the threshold that applies, and the latest calls with their user and query count.
+</td>
+<td width="50%" valign="top">
+<a href="docs/images/screenshots/users.png"><img src="docs/images/screenshots/users.png" alt="Users ranked by requests, with 4xx, 5xx, exceptions and slow requests per user" /></a>
+<b>Users.</b> Who is active, and who runs into errors or slow requests. One user opens with their requests, exceptions and logs.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<a href="docs/images/screenshots/settings.png"><img src="docs/images/screenshots/settings.png" alt="Settings with p95 thresholds per route, job and query, and alert channels" /></a>
+<b>Settings.</b> Performance thresholds per route, job, query and other types. Alert channels: webhook (HMAC-signed), Slack, Discord.
+</td>
+<td width="50%" valign="top">
+<a href="docs/images/screenshots/mcp.png"><img src="docs/images/screenshots/mcp.png" alt="The MCP page with personal tokens and setup snippets for Claude Code, Codex, Cursor and VS Code" /></a>
+<b>MCP server.</b> Personal tokens and ready-to-paste setup for Claude Code, Codex, Cursor and VS Code.
+</td>
+</tr>
+</table>
+
+Also included:
+
 - **Dashboard.** Requests, errors, latency (avg / p95) and throughput over 1 hour to 30 days, or a custom range, per environment.
-- **Requests and routes.** Each route with its slowest and failing calls. A request opens as a trace with its queries, exceptions, logs, cache events, mail and outgoing HTTP calls.
-- **Jobs, commands and scheduled tasks.** Attempts, failures, releases and durations, plus every run of a command or task.
-- **Queries.** The slowest and most frequent statements, with N+1 detection.
-- **Exceptions and logs.** Exceptions are grouped by fingerprint. Logs can be filtered by level, text and user.
+- **Exceptions** ([screenshot](docs/images/screenshots/exceptions.png)). Grouped by fingerprint, with the stack trace (your frames marked, vendor frames folded) and the requests or jobs they came from.
 - **Mail, notifications, cache and outgoing HTTP.** Volumes, failures and timings.
-- **Users.** What one user did: requests, exceptions and logs.
-- **Issues.** Exceptions and slow executions grouped into issues:
-  - status (open, resolved, ignored), priority, assignee, description and comments;
-  - bulk actions and an activity history;
-  - automatic resolve after 7, 14 or 30 days without a new occurrence.
-- **Settings.** Performance thresholds per route, job, query and other types. Alert channels: webhook (HMAC-signed), Slack, Discord. Both are read by the NightOwl agent.
-- **MCP server.** Lets coding agents (Claude Code, Codex, Cursor, VS Code) list and read issues with stack traces, find slow routes, slow queries and failed jobs, and resolve issues if you allow it.
+- **Nova mode.** Reuse Laravel Nova's login and add a sidebar link.
 - **No build step.** The SPA ships prebuilt. Your app needs no npm.
+- **Phone-friendly.** The whole UI works on a small screen.
+
+<p>
+<img src="docs/images/screenshots/mobile-dashboard.png" alt="The dashboard on a phone" width="260" />
+&nbsp;
+<img src="docs/images/screenshots/mobile-issue.png" alt="An issue on a phone" width="260" />
+</p>
+
+The screenshots come from a demo shop with generated traffic. No real users or data are shown.
+
+## Why Lookout
+
+- **Your data stays with you.** Telemetry goes from your app to the NightOwl agent and into your PostgreSQL. Lookout reads it from there. No third-party service sees your requests, SQL or stack traces.
+- **No event quota.** What you keep is limited by your disk and the NightOwl retention settings, not by a plan.
+- **Same instrumentation as Nightwatch.** NightOwl builds on `laravel/nightwatch`, so you get the same request, job, query and exception data.
+- **Issues, not only charts.** Errors and slow executions become issues with an owner, a priority and a history.
+- **Agent access on your terms.** The MCP server runs in your app, behind your gate, with personal tokens that are read-only unless you allow resolving.
+- **Small footprint.** One Composer package, one extra table, no Node, no extra service besides the agent NightOwl already needs.
+
+## How it compares
+
+Facts as stated in each project's own documentation, checked in November 2026. A dash means the linked documentation does not list the feature.
+
+| | Lookout | [Laravel Nightwatch][nw] | [Laravel Pulse][pulse] | [Laravel Telescope][telescope] | [Sentry][sentry] | [Flare][flare] |
+|---|---|---|---|---|---|---|
+| Hosting | Self-hosted, inside your app | Managed service ([FAQ][nw-pricing]) | Self-hosted, inside your app | Self-hosted, inside your app | Managed service, or self-hosted ([docs][sentry-self]) | Managed service |
+| Source code | MIT | Agent package MIT; the service is not open source | MIT | MIT | Self-hosted edition under the FSL ([docs][sentry-self]) | – |
+| Pricing model | Free | Free tier, then monthly plans by event volume ([pricing][nw-pricing]) | Free | Free | Free tier, then plans by usage ([pricing][sentry-pricing]); self-hosted is free | Monthly plans by errors, spans and logs, with a trial ([pricing][flare-pricing]) |
+| Where data is stored | Your PostgreSQL | Nightwatch data centers in the US and EU ([FAQ][nw-pricing]) | Your MySQL, MariaDB or PostgreSQL | Your database | Sentry's cloud, or your servers | Flare's cloud |
+| Per-request traces | Yes | Yes | – (aggregated cards) | Yes (entries per request) | Yes | Yes |
+| Exceptions | Yes | Yes | Yes (counts per class and location) | Yes | Yes | Yes |
+| Issue workflow (status, comments) | Yes, plus assignee and priority | Yes ([MCP docs][nw-mcp]) | – | – | Yes ([docs][sentry-issues]) | Yes ([docs][flare-errors]) |
+| Logs | Yes | Yes | – | Yes | Yes | Yes |
+| MCP server for AI agents | Yes, self-hosted | Yes, hosted ([docs][nw-mcp]) | – | – | Yes ([docs][sentry-mcp]) | Yes ([docs][flare-mcp]) |
+| Meant for production | Yes | Yes | Yes | Mainly local development ([docs][telescope]) | Yes | Yes |
+
+Lookout and Nightwatch capture with the same `laravel/nightwatch` instrumentation. Pick Nightwatch if you want a managed service with nothing to run. Pick Lookout if the data has to stay on your servers or you want to avoid a per-event bill. Pulse and Telescope are free and complement both: Pulse for at-a-glance aggregates, Telescope for local debugging.
+
+[nw]: https://nightwatch.laravel.com
+[nw-pricing]: https://laravel.com/nightwatch/pricing
+[nw-mcp]: https://nightwatch.laravel.com/docs/mcp-server
+[pulse]: https://laravel.com/docs/pulse
+[telescope]: https://laravel.com/docs/telescope
+[sentry]: https://sentry.io
+[sentry-pricing]: https://sentry.io/pricing/
+[sentry-self]: https://develop.sentry.dev/self-hosted/
+[sentry-mcp]: https://mcp.sentry.dev/
+[sentry-issues]: https://docs.sentry.io/product/issues/issue-details/
+[flare]: https://flareapp.io
+[flare-pricing]: https://flareapp.io/pricing
+[flare-mcp]: https://flareapp.io/docs/flare/general/our-mcp-server
+[flare-errors]: https://flareapp.io/docs/flare/errors/working-with-errors
 
 ## Requirements
 
@@ -169,21 +284,6 @@ With `laravel/mcp` installed, Lookout serves an MCP server at `/mcp/lookout`. It
 | `mcp.tokens_table`, `mcp.token_prefix` | `lookout_mcp_tokens`, `lookout_` (12 characters at most) |
 | `mcp.server_name`, `mcp.client_name`, `mcp.app_name` | derived from `app.name` |
 
-## Lookout vs Laravel Nightwatch
-
-| | Lookout | Laravel Nightwatch |
-|---|---|---|
-| Hosting | Self-hosted, inside your app | SaaS |
-| Where the data lives | Your PostgreSQL | The Nightwatch service |
-| Event volume | No quota from Lookout. Limited by your database and NightOwl retention. | Per plan |
-| Price | Free, MIT | Per plan |
-| Source code | Open (MIT) | See Nightwatch |
-| MCP server for AI agents | Built in, with personal tokens | See Nightwatch docs |
-| Issue workflow | Status, priority, assignee, comments, bulk actions, auto-resolve | See Nightwatch docs |
-| You run | PostgreSQL and the NightOwl agent | The Nightwatch agent |
-
-Both capture with the `laravel/nightwatch` instrumentation: NightOwl builds on it. Pick Nightwatch if you want a managed service. Pick Lookout if the data must stay on your servers or you want no per-event bill.
-
 ## Development
 
 ```bash
@@ -193,6 +293,8 @@ sh bin/build.sh      # rebuilds dist/ from resources/js and resources/css
 ```
 
 The SPA is plain JavaScript split into `resources/js/01..09-*.js`. `bin/build.sh` concatenates the files into `dist/app.js`, so no bundler is needed. Commit `dist/` together with the sources: a test fails if they differ.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for pull requests and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 ## Supported by
 

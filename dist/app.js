@@ -139,7 +139,7 @@ function avatar(p, cls = '') {
   return `<span class="av ${cls}" style="background:${avColor(p.id ?? p.user_id ?? label)}" title="${esc(label)}">${esc((label[0] || '?').toUpperCase())}</span>`;
 }
 const userName = u => u ? (u.name || u.email || `User #${u.user_id ?? u.id}`) : 'Guest';
-const iid = id => 'AF-' + id;
+const iid = id => '#' + id;
 // ---------- charts ----------
 // Every chart takes a series from the API (one row per bucket, t = bucket start). CH keeps what the hover tooltip needs.
 const CH = {}; let chSeq = 0; let WIN = null;

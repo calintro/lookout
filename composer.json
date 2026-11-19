@@ -18,6 +18,12 @@
         "performance",
         "error-tracking"
     ],
+    "homepage": "https://github.com/nikolai-vysotskyi/lookout",
+    "support": {
+        "issues": "https://github.com/nikolai-vysotskyi/lookout/issues",
+        "source": "https://github.com/nikolai-vysotskyi/lookout",
+        "security": "https://github.com/nikolai-vysotskyi/lookout/security/policy"
+    },
     "authors": [
         {
             "name": "Nikolai Vysotskyi"

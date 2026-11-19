@@ -1,0 +1,40 @@
+name: Bug report
+description: Something in Lookout does not work as documented.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you saw instead. Paste errors as text.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: input
+    id: lookout
+    attributes:
+      label: Lookout version
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: PHP, Laravel and nightowl/agent versions
+      placeholder: PHP 8.4.x, Laravel 13.x, nightowl/agent 2.x
+    validations:
+      required: true
+  - type: dropdown
+    id: auth
+    attributes:
+      label: Auth mode
+      options: [gate, nova]
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Browser console errors, the failing API response, relevant config. Remove secrets and personal data first.

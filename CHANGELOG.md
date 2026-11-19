@@ -2,6 +2,16 @@
 
 All notable changes to Lookout are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Issue numbers show as `#123`. They carried a hard-coded `AF-` prefix from the app Lookout was extracted from.
+
+### Added
+
+- README screenshots, a comparison with similar tools, CI on PHP 8.3 to 8.5 with Laravel 12 and 13, contributing and security guides, issue templates.
+
 ## [0.1.0] - 2026-11-19
 
 First release, extracted from the monitoring app of [AssetFeed](https://assetfeed.com/search).
